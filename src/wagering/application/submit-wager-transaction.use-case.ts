@@ -1,0 +1,264 @@
+import { randomUUID } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
+import type { EntityManager } from '@mikro-orm/postgresql';
+import { DomainError } from '../../shared/domain/domain-error.js';
+import { Money } from '../../shared/domain/money.js';
+import { businessFieldsOf, payloadHash } from '../../shared/application/canonical-hash.js';
+import { DatabaseService } from '../../shared/infrastructure/database.service.js';
+import type { Wallet } from '../../wallet/domain/wallet.js';
+import { WagerTransaction, type WagerInput, type WagerKind } from '../domain/wager-transaction.js';
+import { WagerRepository } from '../infrastructure/wager.repository.js';
+import type { InboxClaim, SubmitCommand, SubmitResult } from './contracts.js';
+
+const reversals = new Set<WagerKind>(['REFUND', 'ROLLBACK']);
+const uuid = () => randomUUID();
+
+export class ConflictError extends DomainError {}
+export class NotFoundError extends DomainError {}
+export class InboxConflictError extends DomainError {}
+
+function resultOf(transaction: WagerTransaction, replay: boolean): SubmitResult {
+  const s = transaction.snapshot;
+  const balance = s.status === 'PENDING_REFERENCE' ? s.acceptedBalance : s.resultBalance;
+  const version = s.status === 'PENDING_REFERENCE' ? s.acceptedVersion : s.resultVersion;
+  if (!balance || version === undefined) throw new DomainError('INVALID_TRANSACTION_STATE');
+  return {
+    transactionId: s.id,
+    status: s.status,
+    balance,
+    walletVersion: version.toString(),
+    failureCode: s.failureCode,
+    idempotentReplay: replay,
+  };
+}
+
+@Injectable()
+export class SubmitWagerTransactionUseCase {
+  constructor(private readonly database: DatabaseService) {}
+
+  async submit(command: SubmitCommand, inbox?: InboxClaim): Promise<SubmitResult | undefined> {
+    const money = Money.fromContract(command.money);
+    if (!['BET', 'WIN', 'LOSS', 'REFUND', 'ROLLBACK'].includes(command.kind))
+      throw new DomainError('INVALID_TRANSACTION_KIND');
+    const inputWithoutHash = {
+      providerId: command.providerId,
+      externalTransactionId: command.externalTransactionId,
+      playerId: command.playerId,
+      walletId: command.walletId,
+      roundId: command.roundId,
+      gameId: command.gameId,
+      kind: command.kind,
+      money,
+      referenceExternalTransactionId: command.referenceExternalTransactionId ?? undefined,
+    } as const;
+    const hash = payloadHash(businessFieldsOf(inputWithoutHash));
+    if (!inbox) {
+      const fast = await this.database.em
+        .fork()
+        .transactional(async (em) => WagerRepository.findByIdempotency(em, command.idempotencyKey));
+      if (fast) return this.replayOrConflict(fast, hash);
+    }
+    try {
+      return await this.database.transaction(async (em) => {
+        if (inbox) {
+          const claimed = await WagerRepository.claimInbox(
+            em,
+            inbox.consumerName,
+            inbox.messageId,
+            inbox.payloadHash,
+            inbox.transportMessageId,
+          );
+          if (claimed === 'CONFLICT') throw new InboxConflictError('INBOX_PAYLOAD_CONFLICT');
+          if (claimed === 'DONE') return undefined;
+        }
+        const wallet = await WagerRepository.lockWallet(em, command.walletId);
+        if (!wallet) throw new NotFoundError('WALLET_NOT_FOUND');
+        const current = await WagerRepository.findByIdempotency(em, command.idempotencyKey);
+        if (current) {
+          const replay = this.replayOrConflict(current, hash);
+          if (inbox) await WagerRepository.completeInbox(em, inbox.consumerName, inbox.messageId);
+          return replay;
+        }
+        const external = await WagerRepository.findByProviderExternal(
+          em,
+          command.providerId,
+          command.externalTransactionId,
+        );
+        if (external) throw new ConflictError('EXTERNAL_TRANSACTION_CONFLICT');
+        if (wallet.playerId !== command.playerId) throw new DomainError('WALLET_PLAYER_MISMATCH');
+        if (wallet.currency !== money.currency) throw new DomainError('CURRENCY_MISMATCH');
+        const txInput: WagerInput = {
+          ...inputWithoutHash,
+          idempotencyKey: command.idempotencyKey,
+          payloadHash: hash,
+        };
+        const transaction = WagerTransaction.create(txInput, uuid());
+        await this.resolve(em, wallet, transaction);
+        await WagerRepository.insertWager(em, transaction);
+        await this.events(em, transaction, wallet);
+        if (inbox) await WagerRepository.completeInbox(em, inbox.consumerName, inbox.messageId);
+        return resultOf(transaction, false);
+      });
+    } catch (error) {
+      if (this.isUniqueViolation(error))
+        return this.resolveUnique(
+          command.idempotencyKey,
+          command.providerId,
+          command.externalTransactionId,
+          hash,
+        );
+      throw error;
+    }
+  }
+  async retryPending(transactionId: string): Promise<void> {
+    await this.database.transaction(async (em) => {
+      const transaction = await WagerRepository.lockWager(em, transactionId);
+      if (!transaction || transaction.status !== 'PENDING_REFERENCE') return;
+      const wallet = await WagerRepository.lockWallet(em, transaction.snapshot.walletId);
+      if (!wallet) throw new DomainError('WALLET_NOT_FOUND');
+      const state = transaction.snapshot;
+      if (state.referenceExpiresAt && state.referenceExpiresAt <= new Date())
+        transaction.rejected('REFERENCE_NOT_FOUND', wallet.balance, wallet.version);
+      else if (state.referenceAttempts >= 10n)
+        transaction.rejected('REFERENCE_NOT_FOUND', wallet.balance, wallet.version);
+      else await this.resolve(em, wallet, transaction);
+      await WagerRepository.updateWager(em, transaction);
+      if (transaction.status !== 'PENDING_REFERENCE') await this.events(em, transaction, wallet);
+    });
+  }
+
+  private async resolve(
+    em: EntityManager,
+    wallet: Wallet,
+    transaction: WagerTransaction,
+  ): Promise<void> {
+    const s = transaction.snapshot;
+    try {
+      let reference: WagerTransaction | undefined;
+      if (s.referenceExternalTransactionId)
+        reference = await WagerRepository.findByProviderExternal(
+          em,
+          s.providerId,
+          s.referenceExternalTransactionId,
+        );
+      if (reversals.has(s.kind) && !reference) {
+        const now = new Date();
+        const retry = new Date(now.getTime() + 5_000);
+        const expires = new Date(now.getTime() + 86_400_000);
+        transaction.pendingReference(wallet.balance, wallet.version, retry, expires, now);
+        return;
+      }
+      if (reference) this.assertReference(transaction, reference);
+      if (s.kind === 'BET') await this.move(em, wallet, transaction, 'DEBIT');
+      else if (s.kind === 'WIN') await this.move(em, wallet, transaction, 'CREDIT');
+      else if (s.kind === 'LOSS')
+        transaction.processed(wallet.balance, wallet.version, reference?.id);
+      else if (s.kind === 'REFUND')
+        await this.move(em, wallet, transaction, 'CREDIT', reference?.id);
+      else if (s.kind === 'ROLLBACK') {
+        const refKind = reference?.snapshot.kind;
+        if (refKind === 'BET') await this.move(em, wallet, transaction, 'CREDIT', reference?.id);
+        else if (refKind === 'WIN' || refKind === 'REFUND') {
+          try {
+            await this.move(em, wallet, transaction, 'DEBIT', reference!.id);
+          } catch (error) {
+            if (error instanceof DomainError && error.code === 'INSUFFICIENT_FUNDS')
+              throw new DomainError('ROLLBACK_WOULD_CAUSE_NEGATIVE_BALANCE');
+            throw error;
+          }
+        } else throw new DomainError('REFERENCE_KIND_NOT_ALLOWED');
+      }
+    } catch (error) {
+      if (!(error instanceof DomainError)) throw error;
+      transaction.rejected(error.code, wallet.balance, wallet.version);
+    }
+  }
+
+  private async move(
+    em: EntityManager,
+    wallet: Wallet,
+    transaction: WagerTransaction,
+    direction: 'CREDIT' | 'DEBIT',
+    referenceId?: string,
+  ): Promise<void> {
+    const movement =
+      direction === 'CREDIT'
+        ? wallet.credit(transaction.snapshot.money)
+        : wallet.debit(transaction.snapshot.money);
+    transaction.processed(wallet.balance, wallet.version, referenceId);
+    await WagerRepository.updateWallet(em, wallet);
+    await WagerRepository.insertLedger(em, wallet.id, transaction.id, movement);
+  }
+
+  private assertReference(transaction: WagerTransaction, reference: WagerTransaction): void {
+    const a = transaction.snapshot;
+    const b = reference.snapshot;
+    if (b.status !== 'PROCESSED') throw new DomainError('REFERENCE_NOT_PROCESSED');
+    if (
+      a.providerId !== b.providerId ||
+      a.playerId !== b.playerId ||
+      a.walletId !== b.walletId ||
+      a.roundId !== b.roundId ||
+      a.money.currency !== b.money.currency
+    )
+      throw new DomainError('REFERENCE_CONTEXT_MISMATCH');
+    if (!a.money.equals(b.money)) throw new DomainError('REFERENCE_AMOUNT_MISMATCH');
+    if (a.kind === 'REFUND' && b.kind !== 'BET')
+      throw new DomainError('REFERENCE_KIND_NOT_ALLOWED');
+    if (a.kind === 'ROLLBACK' && !['BET', 'WIN', 'REFUND'].includes(b.kind))
+      throw new DomainError('REFERENCE_KIND_NOT_ALLOWED');
+  }
+  private replayOrConflict(existing: WagerTransaction, hash: string): SubmitResult {
+    if (existing.snapshot.payloadHash !== hash) throw new ConflictError('IDEMPOTENCY_CONFLICT');
+    return resultOf(existing, true);
+  }
+  private isUniqueViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === '23505'
+    );
+  }
+  private async resolveUnique(
+    idempotencyKey: string,
+    providerId: string,
+    externalId: string,
+    hash: string,
+  ): Promise<SubmitResult> {
+    const winner = await this.database.em
+      .fork()
+      .transactional(
+        async (em) =>
+          (await WagerRepository.findByIdempotency(em, idempotencyKey)) ??
+          (await WagerRepository.findByProviderExternal(em, providerId, externalId)),
+      );
+    if (!winner) throw new DomainError('TRANSIENT_UNIQUE_RACE');
+    return winner.snapshot.idempotencyKey === idempotencyKey
+      ? this.replayOrConflict(winner, hash)
+      : (() => {
+          throw new ConflictError('EXTERNAL_TRANSACTION_CONFLICT');
+        })();
+  }
+  private async events(em: EntityManager, tx: WagerTransaction, wallet: Wallet): Promise<void> {
+    const s = tx.snapshot;
+    const event =
+      s.status === 'PROCESSED'
+        ? 'WagerTransactionProcessed'
+        : s.status === 'PENDING_REFERENCE'
+          ? 'WagerTransactionPendingReference'
+          : 'WagerTransactionRejected';
+    await WagerRepository.insertOutbox(em, wallet.id, event, {
+      transactionId: s.id,
+      status: s.status,
+      kind: s.kind,
+      correlationId: s.id,
+    });
+    if (s.status === 'PROCESSED' && s.kind !== 'LOSS')
+      await WagerRepository.insertOutbox(em, wallet.id, 'WalletBalanceChanged', {
+        transactionId: s.id,
+        walletVersion: wallet.version.toString(),
+        correlationId: s.id,
+      });
+  }
+}
