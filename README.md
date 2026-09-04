@@ -5,27 +5,68 @@ Financial wagering service built with Bun, strict TypeScript, NestJS, MikroORM, 
 ## Run locally
 
 ```bash
-cp .env.example .env
-bun install
-docker compose up -d postgres localstack
-bun run migration:up
-bun run start:dev
+docker compose up -d --build
+docker compose ps
 ```
 
-Run all executable roles in separate terminals by setting `APP_ROLE` to `api`, `sqs-consumer`, `outbox-publisher`, or `pending-worker`; `all` is the default development role.
+Compose starts six independent application processes after the one-shot migration
+service: `api`, `sqs-consumer`, `outbox-publisher-a`, `outbox-publisher-b`, and
+`pending-worker` (plus `migrate`). The two publishers are intentional: leases in
+PostgreSQL, rather than a singleton process, coordinate the transactional outbox.
+
+For a host-based development session, copy `.env.example`, run the migration once,
+and launch each role in a separate terminal. `APP_INSTANCE_ID` must differ for
+each publisher.
+
+```bash
+bun run migration:up
+APP_ROLE=api APP_INSTANCE_ID=api-local bun src/main.ts
+APP_ROLE=sqs-consumer APP_INSTANCE_ID=consumer-local bun src/main.ts
+APP_ROLE=outbox-publisher APP_INSTANCE_ID=publisher-a bun src/main.ts
+APP_ROLE=outbox-publisher APP_INSTANCE_ID=publisher-b bun src/main.ts
+APP_ROLE=pending-worker APP_INSTANCE_ID=pending-local bun src/main.ts
+```
+
+The API keeps request correlation in `X-Correlation-Id` (or creates one) and
+returns that identifier in every success/error response. Money must always be a
+canonical decimal string, for example `{ "amount": "25.00", "currency": "BRL" }`.
+The API never accepts JSON numeric money.
+
+| Situation | HTTP status | Stable `code` | Retryable |
+| --- | --- | --- | --- |
+| Invalid DTO/envelope contract | 400 | `INVALID_PAYLOAD` | no |
+| Missing wallet/transaction | 404 | domain not-found code | no |
+| Idempotency or uniqueness conflict | 409 | conflict code | no |
+| Business rejection (for example funds) | 422 | business code | no |
+| Dependency/readiness failure | 503 | `NOT_READY`/`TEMPORARY_UNAVAILABLE` | yes |
+
+`GET /health/live` confirms that the API process is alive. `GET /health/ready`
+executes `SELECT 1` against PostgreSQL and reads attributes from the command,
+DLQ and event SQS queues. `GET /metrics` exposes Prometheus text metrics:
+transactions by status, duplicates, retries, DLQ messages, lock conflicts,
+outbox pending/age, processing latency and reconciliation divergence.
+Worker containers expose the same operational endpoints internally on
+`METRICS_PORT` (Compose uses `9464`); publish that port only to a trusted
+Prometheus network when per-worker metrics are scraped.
 
 ```bash
 bun run build
 bun run lint
 bun run format:check
-bun test
-bun run test:integration
+bun run test:unit
+RUN_INTEGRATION=true bun test test/integration/financial-core.test.ts test/integration/migrations.test.ts test/integration/schema-guardrails.test.ts test/integration/distributed-delivery.test.ts
+RUN_INTEGRATION=true bun test test/integration/process-crash-recovery.test.ts
 bun run test:critical
 ```
 
-`test:integration` and `test:critical` require the real PostgreSQL and LocalStack services above. Before Docker is made available to the current user, unit tests and the TypeScript build remain fully runnable.
+The process-recovery test launches an API, a consumer and two publisher processes,
+sets the guarded `CRASH_AFTER_COMMIT_BEFORE_ACK_MESSAGE_ID` hook only in the
+crashing test consumer, expects exit code `86`, and verifies redelivery, Inbox
+deduplication, competing outbox leases and ledger reconciliation. The hook is
+rejected unless `RUN_CRASH_TEST=true`; it is not a production setting.
 
-The public API includes `POST /wallets`, `POST /wagering/transactions`, wallet/ledger/transaction queries, reconciliation, `/health/live`, `/health/ready`, and `/metrics`. Monetary inputs are canonical strings such as `"25.00"`; never send numeric JSON money.
+Every financial integration test ends by reconstructing the wallet balance from
+the signed immutable ledger and asserting equality with the stored balance.
 
 ---
 
@@ -602,6 +643,7 @@ Mensagem:
 {
   "messageId": "msg-123",
   "type": "WagerTransactionRequested",
+  "version": 1,
   "occurredAt": "2026-07-29T15:00:00.000Z",
   "data": {
     "providerId": "provider-a",

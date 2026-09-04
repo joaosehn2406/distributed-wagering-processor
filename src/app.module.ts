@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, RequestMethod, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { loadEnvironment } from './config/environment.js';
 import { DatabaseService } from './shared/infrastructure/database.service.js';
@@ -14,6 +14,7 @@ import { OutboxPublisherWorker } from './outbox/outbox-publisher.worker.js';
 import { PendingReferenceWorker } from './wagering/infrastructure/pending-reference.worker.js';
 import { HealthService } from './health/health.service.js';
 import { SchemaMigrationEntity } from './shared/infrastructure/schema-migration.entity.js';
+import { CorrelationMiddleware } from './bootstrap/correlation.middleware.js';
 
 const env = loadEnvironment();
 @Module({
@@ -35,4 +36,8 @@ const env = loadEnvironment();
     HealthService,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(CorrelationMiddleware).forRoutes({ path: '{*path}', method: RequestMethod.ALL });
+  }
+}

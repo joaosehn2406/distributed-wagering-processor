@@ -3,6 +3,15 @@ import { Wallet } from '../../src/wallet/domain/wallet.js';
 import { Money } from '../../src/shared/domain/money.js';
 
 describe('Wallet', () => {
+  test('opens a zero-balance wallet at version one without a balance movement', () => {
+    const w = Wallet.open({
+      id: 'wallet',
+      playerId: 'player',
+      initialBalance: Money.fromContract({ amount: '0.00', currency: 'BRL' }),
+    });
+    expect(w.balance.toString()).toBe('0.00');
+    expect(w.version).toBe(1n);
+  });
   test('starts at version one and increments only when balance changes', () => {
     const w = Wallet.open({
       id: 'wallet',

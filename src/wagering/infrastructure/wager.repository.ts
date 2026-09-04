@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { EntityManager } from '@mikro-orm/postgresql';
 import { Money } from '../../shared/domain/money.js';
+import { OutboxMessage } from '../../outbox/domain/outbox-message.js';
+import type { IntegrationEvent } from '../../outbox/domain/integration-event.js';
+import { InboxMessage } from '../../messaging/domain/inbox-message.js';
 import { Wallet, type BalanceMovement } from '../../wallet/domain/wallet.js';
 import {
   WagerTransaction,
@@ -20,6 +23,27 @@ const rows = async (em: EntityManager, sql: string, params: unknown[] = []): Pro
 const asDate = (v: unknown): Date => new Date(String(v));
 const optionalDate = (v: unknown): Date | undefined => (v == null ? undefined : asDate(v));
 const optionalString = (v: unknown): string | undefined => (v == null ? undefined : String(v));
+const objectOf = (v: unknown): Record<string, unknown> => {
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) return v as Record<string, unknown>;
+  const parsed: unknown = JSON.parse(String(v));
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    throw new Error('invalid outbox payload');
+  return parsed as Record<string, unknown>;
+};
+
+export interface ClaimedOutboxMessage {
+  id: string;
+  eventId: string;
+  aggregateId: string;
+  payload: Record<string, unknown>;
+  leaseToken: string;
+  attempts: bigint;
+}
+
+export interface OutboxLag {
+  pending: bigint;
+  oldestCreatedAt?: Date;
+}
 
 function walletOf(row: Row): Wallet {
   return Wallet.rehydrate({
@@ -242,31 +266,23 @@ export class WagerRepository {
       createdAt: asDate(r.created_at),
     }));
   }
-  static async pendingDue(em: EntityManager, limit: bigint): Promise<WagerTransaction[]> {
-    const result = await rows(
-      em,
-      "SELECT * FROM wager_transactions WHERE status='PENDING_REFERENCE' AND next_reference_attempt_at <= now() FOR UPDATE SKIP LOCKED LIMIT ?",
-      [limit.toString()],
-    );
-    return result.map(wagerOf);
-  }
-  static async insertOutbox(
+  static async enqueueOutbox(
     em: EntityManager,
-    aggregateId: string,
-    eventType: string,
-    payload: Record<string, unknown>,
+    event: IntegrationEvent<object>,
   ): Promise<void> {
-    const id = randomUUID();
+    const message = OutboxMessage.enqueue(event);
+    const state = message.snapshot;
     await em
       .getConnection()
       .execute(
-        'INSERT INTO outbox_messages(id,event_id,aggregate_id,event_type,event_version,payload,attempts,next_attempt_at,created_at) VALUES (?,?,?,?,1,?,0,now(),now())',
+        'INSERT INTO outbox_messages(id,event_id,aggregate_id,event_type,event_version,payload,attempts,next_attempt_at,created_at) VALUES (?,?,?,?,?,?,0,now(),now())',
         [
-          id,
-          id,
-          aggregateId,
-          eventType,
-          JSON.stringify({ eventId: id, eventVersion: 1, aggregateId, ...payload }),
+          state.id,
+          state.eventId,
+          state.aggregateId,
+          state.eventType,
+          state.eventVersion,
+          JSON.stringify(state.payload),
         ],
       );
   }
@@ -276,11 +292,25 @@ export class WagerRepository {
     messageId: string,
     hash: string,
     transportId?: string,
-  ): Promise<'CLAIMED' | 'DONE' | 'CONFLICT'> {
+  ): Promise<'CLAIMED' | 'DONE' | 'IN_PROGRESS' | 'CONFLICT'> {
+    const inbox = InboxMessage.receive({
+      consumerName: consumer,
+      messageId,
+      payloadHash: hash,
+      transportMessageId: transportId,
+      receivedAt: new Date(),
+    });
+    const state = inbox.snapshot;
     const inserted = await rows(
       em,
-      'INSERT INTO inbox_messages(consumer_name,message_id,payload_hash,transport_message_id,received_at) VALUES (?,?,?,?,now()) ON CONFLICT DO NOTHING RETURNING message_id',
-      [consumer, messageId, hash, transportId ?? null],
+      'INSERT INTO inbox_messages(consumer_name,message_id,payload_hash,transport_message_id,received_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING RETURNING message_id',
+      [
+        state.consumerName,
+        state.messageId,
+        state.payloadHash,
+        state.transportMessageId ?? null,
+        state.receivedAt,
+      ],
     );
     if (inserted.length) return 'CLAIMED';
     const record = await one(
@@ -289,7 +319,7 @@ export class WagerRepository {
       [consumer, messageId],
     );
     if (!record || String(record.payload_hash) !== hash) return 'CONFLICT';
-    return record.processed_at ? 'DONE' : 'CONFLICT';
+    return record.processed_at ? 'DONE' : 'IN_PROGRESS';
   }
   static async completeInbox(
     em: EntityManager,
@@ -302,5 +332,94 @@ export class WagerRepository {
         'UPDATE inbox_messages SET processed_at=now() WHERE consumer_name=? AND message_id=?',
         [consumer, messageId],
       );
+  }
+  static async claimDueOutbox(
+    em: EntityManager,
+    instanceId: string,
+    leaseUntil: Date,
+    limit: bigint,
+  ): Promise<ClaimedOutboxMessage[]> {
+    const candidates = await rows(
+      em,
+      "SELECT * FROM outbox_messages WHERE published_at IS NULL AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until <= now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT ?",
+      [limit.toString()],
+    );
+    const claimed: ClaimedOutboxMessage[] = [];
+    for (const candidate of candidates) {
+      const leaseToken = randomUUID();
+      const updated = await rows(
+        em,
+        'UPDATE outbox_messages SET lease_token=?,lease_until=?,leased_by=?,attempts=attempts+1,last_error_code=NULL WHERE id=? AND published_at IS NULL RETURNING id,event_id,aggregate_id,payload,attempts',
+        [leaseToken, leaseUntil, instanceId, candidate.id],
+      );
+      const row = updated[0];
+      if (!row) continue;
+      claimed.push({
+        id: String(row.id),
+        eventId: String(row.event_id),
+        aggregateId: String(row.aggregate_id),
+        payload: objectOf(row.payload),
+        leaseToken,
+        attempts: BigInt(String(row.attempts)),
+      });
+    }
+    return claimed;
+  }
+  static async markOutboxPublished(
+    em: EntityManager,
+    id: string,
+    leaseToken: string,
+  ): Promise<boolean> {
+    const updated = await rows(
+      em,
+      'UPDATE outbox_messages SET published_at=now(),lease_token=NULL,lease_until=NULL,leased_by=NULL,last_error_code=NULL WHERE id=? AND lease_token=? AND published_at IS NULL RETURNING id',
+      [id, leaseToken],
+    );
+    return updated.length === 1;
+  }
+  static async scheduleOutboxRetry(
+    em: EntityManager,
+    id: string,
+    leaseToken: string,
+    nextAttemptAt: Date,
+    errorCode: string,
+  ): Promise<boolean> {
+    const updated = await rows(
+      em,
+      'UPDATE outbox_messages SET lease_token=NULL,lease_until=NULL,leased_by=NULL,next_attempt_at=?,last_error_code=? WHERE id=? AND lease_token=? AND published_at IS NULL RETURNING id',
+      [nextAttemptAt, errorCode, id, leaseToken],
+    );
+    return updated.length === 1;
+  }
+  static async outboxLag(em: EntityManager): Promise<OutboxLag> {
+    const row = await one(
+      em,
+      'SELECT count(*)::text AS pending, min(created_at) AS oldest_created_at FROM outbox_messages WHERE published_at IS NULL',
+    );
+    return {
+      pending: BigInt(String(row?.pending ?? '0')),
+      oldestCreatedAt: row?.oldest_created_at ? asDate(row.oldest_created_at) : undefined,
+    };
+  }
+  static async claimDuePending(
+    em: EntityManager,
+    leaseUntil: Date,
+    limit: bigint,
+  ): Promise<string[]> {
+    const rows = await em.getConnection().execute<{ id: string }[]>(
+      "SELECT id FROM wager_transactions WHERE status='PENDING_REFERENCE' AND next_reference_attempt_at <= now() FOR UPDATE SKIP LOCKED LIMIT ?",
+      [limit.toString()],
+    );
+    const ids: string[] = [];
+    for (const row of rows) {
+      const updated = await em
+        .getConnection()
+        .execute<{ id: string }[]>(
+          "UPDATE wager_transactions SET next_reference_attempt_at=?,updated_at=now() WHERE id=? AND status='PENDING_REFERENCE' RETURNING id",
+          [leaseUntil, row.id],
+        );
+      if (updated.length) ids.push(String(updated[0]!.id));
+    }
+    return ids;
   }
 }

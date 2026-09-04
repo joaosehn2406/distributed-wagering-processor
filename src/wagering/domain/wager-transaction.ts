@@ -46,6 +46,7 @@ export class WagerTransaction {
   private constructor(private state: WagerState) {}
   static create(input: WagerInput, id: string, now = new Date()): WagerTransaction {
     if (input.kind === 'OPENING') throw new DomainError('OPENING_NOT_EXTERNAL');
+    if (!input.money.isPositive()) throw new DomainError('AMOUNT_MUST_BE_POSITIVE');
     if (
       (input.kind === 'REFUND' || input.kind === 'ROLLBACK') &&
       !input.referenceExternalTransactionId

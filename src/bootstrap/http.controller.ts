@@ -1,32 +1,26 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CreateWalletUseCase } from '../wallet/application/create-wallet.use-case.js';
 import { ReconcileWalletUseCase } from '../wallet/application/reconcile-wallet.use-case.js';
 import { SubmitWagerTransactionUseCase } from '../wagering/application/submit-wager-transaction.use-case.js';
 import { WagerRepository } from '../wagering/infrastructure/wager.repository.js';
 import { DatabaseService } from '../shared/infrastructure/database.service.js';
-import { DomainError } from '../shared/domain/domain-error.js';
-import type { WagerKind } from '../wagering/domain/wager-transaction.js';
 import { HealthService } from '../health/health.service.js';
 import { MetricsService } from '../shared/infrastructure/metrics.service.js';
+import { DomainError } from '../shared/domain/domain-error.js';
+import {
+  CreateWalletDto,
+  LedgerQueryDto,
+  ProviderTransactionParamsDto,
+  SubmitWagerDto,
+  TransactionIdParamsDto,
+  WalletIdParamsDto,
+} from './http.dto.js';
+import { correlationIdOf, type CorrelatedRequest } from './correlation.middleware.js';
 
-type WalletBody = { playerId: string; initialBalance: { amount: string; currency: string } };
-type WagerBody = {
-  providerId: string;
-  externalTransactionId: string;
-  playerId: string;
-  walletId: string;
-  roundId: string;
-  gameId: string;
-  kind: WagerKind;
-  money: { amount: string; currency: string };
-  referenceExternalTransactionId?: string | null;
-};
-const isUuid = (value: string): boolean =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-function assertText(value: unknown, name: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0)
-    throw new DomainError('INVALID_PAYLOAD', `${name} is required`);
+function idempotencyKeyOf(value: string | undefined): string {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 255)
+    throw new DomainError('INVALID_PAYLOAD', 'Idempotency-Key is required');
   return value;
 }
 
@@ -66,14 +60,18 @@ export class HttpController {
     private readonly health: HealthService,
     private readonly metrics: MetricsService,
   ) {}
-  @Post('wallets') async createWallet(@Body() body: WalletBody, @Res() response: Response) {
-    assertText(body?.playerId, 'playerId');
-    if (!isUuid(body.playerId)) throw new DomainError('INVALID_PAYLOAD');
-    const value = await this.wallets.execute(body);
-    return response.status(201).json({ ...value, version: BigInt(value.version).toString() });
+  @Post('wallets')
+  async createWallet(
+    @Body() body: CreateWalletDto,
+    @Req() request: CorrelatedRequest,
+    @Res() response: Response,
+  ) {
+    const value = await this.wallets.execute({ ...body, correlationId: correlationIdOf(request) });
+    return response.status(201).json(value);
   }
-  @Get('wallets/:walletId') async wallet(@Param('walletId') id: string) {
-    const wallet = await WagerRepository.findWallet(this.database.em, id);
+  @Get('wallets/:walletId')
+  async wallet(@Param() params: WalletIdParamsDto) {
+    const wallet = await WagerRepository.findWallet(this.database.em, params.walletId);
     if (!wallet) throw new DomainError('WALLET_NOT_FOUND');
     return {
       id: wallet.id,
@@ -82,17 +80,17 @@ export class HttpController {
       version: wallet.version.toString(),
     };
   }
-  @Get('wallets/:walletId/ledger') async ledger(
-    @Param('walletId') id: string,
-    @Query('limit') rawLimit?: string,
-    @Query('cursor') rawCursor?: string,
+  @Get('wallets/:walletId/ledger')
+  async ledger(
+    @Param() params: WalletIdParamsDto,
+    @Query() query: LedgerQueryDto,
   ) {
-    const limit = rawLimit === undefined ? 50n : BigInt(rawLimit);
+    const limit = query.limit === undefined ? 50n : BigInt(query.limit);
     if (limit < 1n || limit > 100n) throw new DomainError('INVALID_PAYLOAD');
     let cursor: { createdAt: Date; id: string } | undefined;
-    if (rawCursor) {
+    if (query.cursor) {
       try {
-        const parsed = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8')) as {
+        const parsed = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8')) as {
           createdAt: string;
           id: string;
         };
@@ -102,7 +100,7 @@ export class HttpController {
         throw new DomainError('INVALID_PAYLOAD', 'invalid ledger cursor');
       }
     }
-    const items = await WagerRepository.ledger(this.database.em, id, limit, cursor);
+    const items = await WagerRepository.ledger(this.database.em, params.walletId, limit, cursor);
     const last = items.at(-1);
     return {
       items,
@@ -114,25 +112,22 @@ export class HttpController {
         : null,
     };
   }
-  @Post('wallets/:walletId/reconciliation') async reconciliation(@Param('walletId') id: string) {
-    return this.reconcile.execute(id);
+  @Post('wallets/:walletId/reconciliation')
+  async reconciliation(@Param() params: WalletIdParamsDto, @Req() request: CorrelatedRequest) {
+    return this.reconcile.execute(params.walletId, correlationIdOf(request));
   }
   @Post('wagering/transactions') async wager(
-    @Body() body: WagerBody,
+    @Body() body: SubmitWagerDto,
     @Headers('idempotency-key') key: string | undefined,
+    @Req() request: CorrelatedRequest,
     @Res() response: Response,
   ) {
-    const idempotencyKey = assertText(key, 'Idempotency-Key');
-    for (const field of [
-      'providerId',
-      'externalTransactionId',
-      'playerId',
-      'walletId',
-      'roundId',
-      'gameId',
-    ] as const)
-      assertText(body?.[field], field);
-    const result = await this.submit.submit({ ...body, idempotencyKey });
+    const idempotencyKey = idempotencyKeyOf(key);
+    const result = await this.submit.submit({
+      ...body,
+      idempotencyKey,
+      correlationId: correlationIdOf(request),
+    });
     if (!result) throw new DomainError('INVALID_TRANSACTION_STATE');
     const status =
       result.status === 'PENDING_REFERENCE'
@@ -144,27 +139,29 @@ export class HttpController {
             : 201;
     return response.status(status).json(result);
   }
-  @Get('wagering/transactions/:transactionId') async findTransaction(
-    @Param('transactionId') id: string,
-  ) {
-    return transactionJson(await WagerRepository.findById(this.database.em, id));
+  @Get('wagering/transactions/:transactionId')
+  async findTransaction(@Param() params: TransactionIdParamsDto) {
+    return transactionJson(await WagerRepository.findById(this.database.em, params.transactionId));
   }
-  @Get('providers/:providerId/wagering/transactions/:externalTransactionId') async findExternal(
-    @Param('providerId') provider: string,
-    @Param('externalTransactionId') external: string,
-  ) {
+  @Get('providers/:providerId/wagering/transactions/:externalTransactionId')
+  async findExternal(@Param() params: ProviderTransactionParamsDto) {
     return transactionJson(
-      await WagerRepository.findByProviderExternal(this.database.em, provider, external),
+      await WagerRepository.findByProviderExternal(
+        this.database.em,
+        params.providerId,
+        params.externalTransactionId,
+      ),
     );
   }
-  @Get('health/live') @HttpCode(200) live() {
+  @Get('health/live')
+  live() {
     return { status: 'ok' };
   }
   @Get('health/ready') async ready() {
     return this.health.ready();
   }
   @Get('metrics') async metricsText(@Res() response: Response) {
-    response.type('text/plain');
+    response.setHeader('Content-Type', this.metrics.contentType);
     return response.send(await this.metrics.text());
   }
 }

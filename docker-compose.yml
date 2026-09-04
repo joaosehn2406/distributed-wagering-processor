@@ -1,3 +1,38 @@
+x-application-environment: &application-environment
+  DATABASE_URL: postgresql://wager:wager@postgres:5432/wagering
+  SQS_ENDPOINT: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  WAGER_QUEUE_URL: http://localstack:4566/000000000000/wager-transactions.fifo
+  WAGER_DLQ_QUEUE_URL: http://localstack:4566/000000000000/wager-transactions-dlq.fifo
+  WALLET_EVENTS_QUEUE_URL: http://localstack:4566/000000000000/wallet-events.fifo
+  PENDING_MAX_ATTEMPTS: 10
+  PENDING_TTL_SECONDS: 86400
+  PENDING_BACKOFF_BASE_SECONDS: 5
+  PENDING_BACKOFF_MAX_SECONDS: 3600
+  PENDING_CLAIM_SECONDS: 60
+  PENDING_BATCH_SIZE: 25
+  PENDING_POLL_MILLISECONDS: 1000
+  OUTBOX_BACKOFF_BASE_SECONDS: 1
+  OUTBOX_BACKOFF_MAX_SECONDS: 300
+  OUTBOX_LEASE_SECONDS: 60
+  OUTBOX_BATCH_SIZE: 25
+  OUTBOX_POLL_MILLISECONDS: 500
+  SQS_VISIBILITY_TIMEOUT_SECONDS: 60
+  SQS_LONG_POLL_SECONDS: 10
+  SQS_BATCH_SIZE: 10
+  SQS_MAX_RECEIVE_ATTEMPTS: 5
+  SQS_RETRY_BACKOFF_BASE_SECONDS: 1
+  SQS_RETRY_BACKOFF_MAX_SECONDS: 60
+  CONSUMER_SHUTDOWN_SECONDS: 30
+
+x-application-depends-on: &application-depends-on
+  migrate:
+    condition: service_completed_successfully
+  localstack:
+    condition: service_healthy
+
 services:
   postgres:
     image: postgres:16.8-alpine
@@ -11,6 +46,7 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+
   localstack:
     image: localstack/localstack:3.8.1
     environment:
@@ -25,3 +61,69 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  migrate:
+    build: .
+    command: ['bun', 'dist/migrations/run.js', 'up']
+    environment: *application-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  api:
+    build: .
+    command: ['bun', 'dist/main.js']
+    environment:
+      <<: *application-environment
+      APP_ROLE: api
+      APP_INSTANCE_ID: api-1
+      PORT: 3000
+    ports: ['3000:3000']
+    restart: unless-stopped
+    depends_on: *application-depends-on
+
+  sqs-consumer:
+    build: .
+    command: ['bun', 'dist/main.js']
+    environment:
+      <<: *application-environment
+      APP_ROLE: sqs-consumer
+      APP_INSTANCE_ID: sqs-consumer-1
+      METRICS_PORT: 9464
+    restart: unless-stopped
+    depends_on: *application-depends-on
+
+  outbox-publisher-a:
+    build: .
+    command: ['bun', 'dist/main.js']
+    environment:
+      <<: *application-environment
+      APP_ROLE: outbox-publisher
+      APP_INSTANCE_ID: outbox-publisher-a
+      METRICS_PORT: 9464
+    restart: unless-stopped
+    depends_on: *application-depends-on
+
+  outbox-publisher-b:
+    build: .
+    command: ['bun', 'dist/main.js']
+    environment:
+      <<: *application-environment
+      APP_ROLE: outbox-publisher
+      APP_INSTANCE_ID: outbox-publisher-b
+      METRICS_PORT: 9464
+    restart: unless-stopped
+    depends_on: *application-depends-on
+
+  pending-worker:
+    build: .
+    command: ['bun', 'dist/main.js']
+    environment:
+      <<: *application-environment
+      APP_ROLE: pending-worker
+      APP_INSTANCE_ID: pending-worker-1
+      METRICS_PORT: 9464
+    restart: unless-stopped
+    depends_on: *application-depends-on

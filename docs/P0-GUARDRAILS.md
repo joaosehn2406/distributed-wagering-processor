@@ -9,5 +9,8 @@
 | Ledger immutable | PostgreSQL update/delete/truncate triggers | Schema integration test |
 | No lost confirmed event | Transactional outbox | Concurrent publisher integration scenario |
 | At-least-once SQS | Inbox row in same financial transaction | Crash/redelivery integration scenario |
+| Versioned contracts | Type-owned `version` in outbox events; consumer requires command version `1` | Unit event serialization and SQS integration |
+| Deterministic recovery | Commit precedes broker acknowledgement; lease ownership is conditional | Real child-process crash-after-commit test |
+| Diagnosable divergence | Reconciliation returns signed-ledger difference, JSON log and Prometheus counter | Financial and process integration reconciliation |
 
 The database is the final arbiter; FIFO ordering and in-memory process state are never financial guarantees.
