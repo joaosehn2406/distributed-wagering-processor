@@ -266,10 +266,7 @@ export class WagerRepository {
       createdAt: asDate(r.created_at),
     }));
   }
-  static async enqueueOutbox(
-    em: EntityManager,
-    event: IntegrationEvent<object>,
-  ): Promise<void> {
+  static async enqueueOutbox(em: EntityManager, event: IntegrationEvent<object>): Promise<void> {
     const message = OutboxMessage.enqueue(event);
     const state = message.snapshot;
     await em
@@ -341,7 +338,7 @@ export class WagerRepository {
   ): Promise<ClaimedOutboxMessage[]> {
     const candidates = await rows(
       em,
-      "SELECT * FROM outbox_messages WHERE published_at IS NULL AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until <= now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT ?",
+      'SELECT * FROM outbox_messages WHERE published_at IS NULL AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until <= now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT ?',
       [limit.toString()],
     );
     const claimed: ClaimedOutboxMessage[] = [];
@@ -406,18 +403,18 @@ export class WagerRepository {
     leaseUntil: Date,
     limit: bigint,
   ): Promise<string[]> {
-    const rows = await em.getConnection().execute<{ id: string }[]>(
-      "SELECT id FROM wager_transactions WHERE status='PENDING_REFERENCE' AND next_reference_attempt_at <= now() FOR UPDATE SKIP LOCKED LIMIT ?",
-      [limit.toString()],
-    );
+    const rows = await em
+      .getConnection()
+      .execute<
+        { id: string }[]
+      >("SELECT id FROM wager_transactions WHERE status='PENDING_REFERENCE' AND next_reference_attempt_at <= now() FOR UPDATE SKIP LOCKED LIMIT ?", [limit.toString()]);
     const ids: string[] = [];
     for (const row of rows) {
       const updated = await em
         .getConnection()
-        .execute<{ id: string }[]>(
-          "UPDATE wager_transactions SET next_reference_attempt_at=?,updated_at=now() WHERE id=? AND status='PENDING_REFERENCE' RETURNING id",
-          [leaseUntil, row.id],
-        );
+        .execute<
+          { id: string }[]
+        >("UPDATE wager_transactions SET next_reference_attempt_at=?,updated_at=now() WHERE id=? AND status='PENDING_REFERENCE' RETURNING id", [leaseUntil, row.id]);
       if (updated.length) ids.push(String(updated[0]!.id));
     }
     return ids;

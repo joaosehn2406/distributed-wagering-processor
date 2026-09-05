@@ -59,7 +59,8 @@ function port(name: string, value: string): number {
   if (!/^[1-9]\d{0,4}$/.test(value))
     throw new DomainError('INVALID_CONFIGURATION', `${name} must be a valid port`);
   const parsed = Number(value);
-  if (parsed > 65_535) throw new DomainError('INVALID_CONFIGURATION', `${name} must be a valid port`);
+  if (parsed > 65_535)
+    throw new DomainError('INVALID_CONFIGURATION', `${name} must be a valid port`);
   return parsed;
 }
 export function loadEnvironment(): Environment {
@@ -121,7 +122,10 @@ export function loadEnvironment(): Environment {
     environment.sqsVisibilityTimeoutSeconds > 43_200n ||
     environment.sqsRetryBackoffMaxSeconds > 43_200n
   )
-    throw new DomainError('INVALID_CONFIGURATION', 'SQS visibility and retry backoff must not exceed 43200');
+    throw new DomainError(
+      'INVALID_CONFIGURATION',
+      'SQS visibility and retry backoff must not exceed 43200',
+    );
   if (
     environment.crashAfterCommitBeforeAckMessageId !== undefined &&
     process.env.RUN_CRASH_TEST !== 'true'

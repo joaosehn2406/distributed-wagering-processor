@@ -24,16 +24,20 @@ integration('migration runner supports up, repeated up, down, and up again', asy
         'wallets',
       );
       expect(
-        (await client.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='outbox_messages' AND column_name='lease_token'",
-        )).rows,
+        (
+          await client.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='outbox_messages' AND column_name='lease_token'",
+          )
+        ).rows,
       ).toEqual([]);
-      expect((await client.query('SELECT name FROM schema_migrations ORDER BY name')).rows).toEqual([
-        { name: '0001_initial' },
-      ]);
+      expect((await client.query('SELECT name FROM schema_migrations ORDER BY name')).rows).toEqual(
+        [{ name: '0001_initial' }],
+      );
 
       await runMigrations(databaseUrl, 'down');
-      expect((await client.query("SELECT to_regclass('wallets') AS object")).rows[0]?.object).toBeNull();
+      expect(
+        (await client.query("SELECT to_regclass('wallets') AS object")).rows[0]?.object,
+      ).toBeNull();
       expect(
         (await client.query("SELECT to_regprocedure('reject_ledger_mutation()') AS object")).rows[0]
           ?.object,
@@ -42,12 +46,15 @@ integration('migration runner supports up, repeated up, down, and up again', asy
 
       await runMigrations(databaseUrl, 'up');
       expect(
-        (await client.query("SELECT to_regclass('wallet_ledger_entries') AS object")).rows[0]?.object,
+        (await client.query("SELECT to_regclass('wallet_ledger_entries') AS object")).rows[0]
+          ?.object,
       ).toBe('wallet_ledger_entries');
       expect(
-        (await client.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='outbox_messages' AND column_name='lease_token'",
-        )).rows,
+        (
+          await client.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='outbox_messages' AND column_name='lease_token'",
+          )
+        ).rows,
       ).toEqual([{ column_name: 'lease_token' }]);
     } finally {
       await client.end();

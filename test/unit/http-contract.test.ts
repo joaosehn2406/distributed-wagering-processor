@@ -40,11 +40,15 @@ test('maps invalid payload, business rejection, conflict and readiness to stable
       retryable: false,
     },
   });
-  expect(mapHttpError(new DomainError('INSUFFICIENT_FUNDS'), 'correlation-business')).toMatchObject({
-    status: 422,
-    body: { code: 'INSUFFICIENT_FUNDS', retryable: false },
-  });
-  expect(mapHttpError(new DomainError('IDEMPOTENCY_CONFLICT'), 'correlation-conflict')).toMatchObject({
+  expect(mapHttpError(new DomainError('INSUFFICIENT_FUNDS'), 'correlation-business')).toMatchObject(
+    {
+      status: 422,
+      body: { code: 'INSUFFICIENT_FUNDS', retryable: false },
+    },
+  );
+  expect(
+    mapHttpError(new DomainError('IDEMPOTENCY_CONFLICT'), 'correlation-conflict'),
+  ).toMatchObject({
     status: 409,
     body: { code: 'IDEMPOTENCY_CONFLICT', retryable: false },
   });

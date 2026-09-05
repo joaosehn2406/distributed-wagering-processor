@@ -201,9 +201,9 @@ integration('persists the financial core atomically and enforces schema guardrai
           [randomUUID(), openingPlayer, 'BRL', '0.00', '1'],
         ),
       ).rejects.toThrow('wallets_player_currency_uk');
-      await expect(client.query('UPDATE wallets SET balance=-1.00 WHERE id=$1', [opening.id])).rejects.toThrow(
-        'wallets_balance_nonnegative_ck',
-      );
+      await expect(
+        client.query('UPDATE wallets SET balance=-1.00 WHERE id=$1', [opening.id]),
+      ).rejects.toThrow('wallets_balance_nonnegative_ck');
       await expect(
         client.query(
           `INSERT INTO wager_transactions(
@@ -258,7 +258,9 @@ integration('persists the financial core atomically and enforces schema guardrai
         ),
       ).rejects.toThrow('ledger_arithmetic_ck');
       await expect(
-        client.query('UPDATE wallet_ledger_entries SET amount=99.00 WHERE wallet_id=$1', [opening.id]),
+        client.query('UPDATE wallet_ledger_entries SET amount=99.00 WHERE wallet_id=$1', [
+          opening.id,
+        ]),
       ).rejects.toThrow('wallet ledger is append-only');
       await expect(
         client.query('DELETE FROM wallet_ledger_entries WHERE wallet_id=$1', [opening.id]),

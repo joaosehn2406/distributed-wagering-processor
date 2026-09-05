@@ -9,7 +9,10 @@ import { NotFoundError } from '../../wagering/application/submit-wager-transacti
 @Injectable()
 export class ReconcileWalletUseCase {
   constructor(private readonly database: DatabaseService) {}
-  async execute(walletId: string, correlationId?: string): Promise<{
+  async execute(
+    walletId: string,
+    correlationId?: string,
+  ): Promise<{
     walletId: string;
     consistent: boolean;
     storedBalance: MoneyProps;
@@ -24,10 +27,7 @@ export class ReconcileWalletUseCase {
         .getConnection()
         .execute<
           { balance: string; checked_entries: string }[]
-        >(
-          "SELECT COALESCE(SUM(CASE WHEN direction='CREDIT' THEN amount ELSE -amount END), 0.00)::numeric(20,2)::text AS balance, count(*)::text AS checked_entries FROM wallet_ledger_entries WHERE wallet_id=?",
-          [walletId],
-        );
+        >("SELECT COALESCE(SUM(CASE WHEN direction='CREDIT' THEN amount ELSE -amount END), 0.00)::numeric(20,2)::text AS balance, count(*)::text AS checked_entries FROM wallet_ledger_entries WHERE wallet_id=?", [walletId]);
       const ledger = Money.fromPersistence({
         amount: String(data[0]?.balance ?? '0.00'),
         currency: wallet.currency,

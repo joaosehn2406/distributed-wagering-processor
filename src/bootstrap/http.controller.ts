@@ -81,10 +81,7 @@ export class HttpController {
     };
   }
   @Get('wallets/:walletId/ledger')
-  async ledger(
-    @Param() params: WalletIdParamsDto,
-    @Query() query: LedgerQueryDto,
-  ) {
+  async ledger(@Param() params: WalletIdParamsDto, @Query() query: LedgerQueryDto) {
     const limit = query.limit === undefined ? 50n : BigInt(query.limit);
     if (limit < 1n || limit > 100n) throw new DomainError('INVALID_PAYLOAD');
     let cursor: { createdAt: Date; id: string } | undefined;

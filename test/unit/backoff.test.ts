@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test';
-import { addMilliseconds, exponentialBackoffMilliseconds } from '../../src/shared/application/backoff.js';
+import {
+  addMilliseconds,
+  exponentialBackoffMilliseconds,
+} from '../../src/shared/application/backoff.js';
 
 test('uses exact integer exponential backoff with injectable jitter', () => {
   const noJitter = () => 10_000n;

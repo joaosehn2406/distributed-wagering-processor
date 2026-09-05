@@ -32,13 +32,13 @@ returns that identifier in every success/error response. Money must always be a
 canonical decimal string, for example `{ "amount": "25.00", "currency": "BRL" }`.
 The API never accepts JSON numeric money.
 
-| Situation | HTTP status | Stable `code` | Retryable |
-| --- | --- | --- | --- |
-| Invalid DTO/envelope contract | 400 | `INVALID_PAYLOAD` | no |
-| Missing wallet/transaction | 404 | domain not-found code | no |
-| Idempotency or uniqueness conflict | 409 | conflict code | no |
-| Business rejection (for example funds) | 422 | business code | no |
-| Dependency/readiness failure | 503 | `NOT_READY`/`TEMPORARY_UNAVAILABLE` | yes |
+| Situation                              | HTTP status | Stable `code`                       | Retryable |
+| -------------------------------------- | ----------- | ----------------------------------- | --------- |
+| Invalid DTO/envelope contract          | 400         | `INVALID_PAYLOAD`                   | no        |
+| Missing wallet/transaction             | 404         | domain not-found code               | no        |
+| Idempotency or uniqueness conflict     | 409         | conflict code                       | no        |
+| Business rejection (for example funds) | 422         | business code                       | no        |
+| Dependency/readiness failure           | 503         | `NOT_READY`/`TEMPORARY_UNAVAILABLE` | yes       |
 
 `GET /health/live` confirms that the API process is alive. `GET /health/ready`
 executes `SELECT 1` against PostgreSQL and reads attributes from the command,

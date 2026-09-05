@@ -44,7 +44,9 @@ export async function runMigrations(databaseUrl: string, command: MigrationComma
     if (!migration) return;
     await orm.em.transactional(async (em) => {
       await em.getConnection().execute(migration.down);
-      await em.getConnection().execute('DELETE FROM schema_migrations WHERE name=?', [migration.name]);
+      await em
+        .getConnection()
+        .execute('DELETE FROM schema_migrations WHERE name=?', [migration.name]);
     });
   } finally {
     await orm.close(true);

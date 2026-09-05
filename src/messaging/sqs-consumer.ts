@@ -169,7 +169,7 @@ export class SqsConsumer implements OnModuleInit, OnModuleDestroy {
             WaitTimeSeconds: Number(this.env.sqsLongPollSeconds),
             VisibilityTimeout: Number(this.env.sqsVisibilityTimeoutSeconds),
             MaxNumberOfMessages: Number(this.env.sqsBatchSize),
-            AttributeNames: ['ApproximateReceiveCount'],
+            MessageSystemAttributeNames: ['ApproximateReceiveCount'],
           }),
         );
         for (const message of batch.Messages ?? []) {
@@ -198,10 +198,12 @@ export class SqsConsumer implements OnModuleInit, OnModuleDestroy {
       throw new PermanentEnvelopeError('invalid envelope');
     const envelope = value as Record<string, unknown>;
     const messageId = boundedText(envelope.messageId, 'messageId', 255n);
-    if (envelope.type !== 'WagerTransactionRequested') throw new PermanentEnvelopeError('invalid type');
+    if (envelope.type !== 'WagerTransactionRequested')
+      throw new PermanentEnvelopeError('invalid type');
     if (envelope.version !== 1) throw new PermanentEnvelopeError('unsupported event version');
     const occurredAt = requiredText(envelope.occurredAt, 'occurredAt');
-    if (Number.isNaN(Date.parse(occurredAt))) throw new PermanentEnvelopeError('invalid occurredAt');
+    if (Number.isNaN(Date.parse(occurredAt)))
+      throw new PermanentEnvelopeError('invalid occurredAt');
     const correlationId =
       envelope.correlationId === undefined
         ? messageId
@@ -211,7 +213,8 @@ export class SqsConsumer implements OnModuleInit, OnModuleDestroy {
     const data = envelope.data as Record<string, unknown>;
     const playerId = requiredText(data.playerId, 'data.playerId');
     const walletId = requiredText(data.walletId, 'data.walletId');
-    if (!validUuid(playerId) || !validUuid(walletId)) throw new PermanentEnvelopeError('invalid UUID');
+    if (!validUuid(playerId) || !validUuid(walletId))
+      throw new PermanentEnvelopeError('invalid UUID');
     const kind = requiredText(data.kind, 'data.kind');
     if (!['BET', 'WIN', 'LOSS', 'REFUND', 'ROLLBACK'].includes(kind))
       throw new PermanentEnvelopeError('invalid kind');

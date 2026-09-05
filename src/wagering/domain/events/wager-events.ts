@@ -1,6 +1,9 @@
 import type { MoneyProps } from '../../../shared/domain/money.js';
 import type { BalanceMovement, Wallet } from '../../../wallet/domain/wallet.js';
-import { IntegrationEvent, type IntegrationEventProps } from '../../../outbox/domain/integration-event.js';
+import {
+  IntegrationEvent,
+  type IntegrationEventProps,
+} from '../../../outbox/domain/integration-event.js';
 import type { WagerTransaction } from '../wager-transaction.js';
 
 export interface EventContext {
@@ -40,7 +43,10 @@ export class WagerTransactionProcessedEvent extends IntegrationEvent<WagerEventD
   readonly eventType = 'WagerTransactionProcessed';
   readonly version = 1;
 
-  static from(transaction: WagerTransaction, context: EventContext): WagerTransactionProcessedEvent {
+  static from(
+    transaction: WagerTransaction,
+    context: EventContext,
+  ): WagerTransactionProcessedEvent {
     const state = transaction.snapshot;
     return new WagerTransactionProcessedEvent({
       aggregateId: state.walletId,

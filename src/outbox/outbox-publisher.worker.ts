@@ -61,14 +61,18 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
         const published = await this.database.transaction((em) =>
           WagerRepository.markOutboxPublished(em, message.id, message.leaseToken),
         );
-        writeJsonLog(published ? 'info' : 'warn', published ? 'outbox.published' : 'outbox.lease_lost', {
-          correlationId: String(message.payload.correlationId ?? message.eventId),
-          transactionId: eventField(message.payload, 'transactionId'),
-          walletId: message.aggregateId,
-          providerId: eventField(message.payload, 'providerId'),
-          component: 'outbox',
-          status: published ? 'PUBLISHED' : 'LEASE_LOST',
-        });
+        writeJsonLog(
+          published ? 'info' : 'warn',
+          published ? 'outbox.published' : 'outbox.lease_lost',
+          {
+            correlationId: String(message.payload.correlationId ?? message.eventId),
+            transactionId: eventField(message.payload, 'transactionId'),
+            walletId: message.aggregateId,
+            providerId: eventField(message.payload, 'providerId'),
+            component: 'outbox',
+            status: published ? 'PUBLISHED' : 'LEASE_LOST',
+          },
+        );
       } catch {
         const retryAt = addMilliseconds(
           new Date(),
