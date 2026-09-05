@@ -76,7 +76,7 @@ integration(
         const commonEnvironment = {
           ...process.env,
           DATABASE_URL: databaseUrl,
-          SQS_ENDPOINT: process.env.SQS_ENDPOINT ?? 'http://localhost:4566',
+          SQS_ENDPOINT: process.env.SQS_ENDPOINT ?? 'http://localhost:45666',
           AWS_REGION: process.env.AWS_REGION ?? 'us-east-1',
           AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID ?? 'test',
           AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY ?? 'test',

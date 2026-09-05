@@ -22,7 +22,7 @@ Esta matriz segue a hierarquia `INSTRUCOES.txt > código/testes executáveis > g
 | Reconciliação exata, sem correção silenciosa                                         | IMPLEMENTADO E VALIDADO | `reconcile-wallet.use-case.ts`; todos os testes de integração financeiros                                                                     | Toda suíte financeira terminou com igualdade exata ledger/wallet.                                                                           |
 | DTOs, erros HTTP estáveis e cursor opaco do ledger                                   | IMPLEMENTADO E VALIDADO | `http.dto.ts`, `http.controller.ts`, `http-error.ts`; `http-contract.test.ts`; `process-crash-recovery.test.ts`                               | Contrato unitário e endpoints HTTP reais passaram.                                                                                          |
 | Logs JSON, métricas de negócio e health live/ready                                   | IMPLEMENTADO E VALIDADO | `structured-logger.ts`, `metrics.service.ts`, `health.service.ts`; `observability.test.ts`; Compose                                           | `/health/live`, `/health/ready` e `/metrics` responderam contra serviços reais.                                                             |
-| Docker Compose com API, consumer, dois publishers e pending worker                   | IMPLEMENTADO E VALIDADO | `docker-compose.yml`, `Dockerfile`, `.gitattributes`, `scripts/localstack/init-queues.sh`                                                     | Stack iniciou; hook LocalStack foi validado após recriação do container.                                                                    |
+| Docker Compose com API, consumer, dois publishers e pending worker                   | IMPLEMENTADO E VALIDADO | `docker-compose.yml`, `Dockerfile`, `.env.example`, `.gitattributes`, `scripts/localstack/init-queues.sh`                                     | Stack iniciou com PostgreSQL em `55432`, LocalStack em `45666` e hook/healthcheck que espera as três filas.                                 |
 | Três instâncias/processos, crash pós-commit/pré-ACK e restart                        | IMPLEMENTADO E VALIDADO | `three-process-wallet-race.test.ts`, `process-crash-recovery.test.ts`, `concurrency.test.ts`, Compose                                         | Três processos `APP_ROLE=all`, crash e restart passaram contra os mesmos recursos.                                                          |
 | Documentação operacional e decisões publicadas                                       | IMPLEMENTADO E VALIDADO | `README.md`, `ARCHITECTURE.md`, `VALIDACAO_FINAL.md`, este arquivo                                                                            | Autenticação segue explicitamente fora de escopo, com `NoopAuthGuard` como ponto de extensão; a arquitetura não depende de caminho externo. |
 
@@ -33,11 +33,12 @@ Esta matriz segue a hierarquia `INSTRUCOES.txt > código/testes executáveis > g
 - `bun run format:check` — aprovado.
 - `bun run test:unit` — aprovado: 20 testes, 60 expectations, 0 falhas.
 - `docker compose config --quiet` — aprovado.
-- `docker compose up -d --build` — aprovado: PostgreSQL e LocalStack saudáveis; API, consumer, dois publishers e pending worker em execução.
+- `docker compose up -d --build --force-recreate` — aprovado: PostgreSQL em `55432`, LocalStack em `45666`, API, consumer, dois publishers e pending worker em execução. O processo preservou volumes e não tocou no PostgreSQL externo da porta `5432`.
 - `GET /health/live`, `GET /health/ready` e `GET /metrics` — aprovados contra a stack real.
-- `docker compose run --rm --no-deps api bun run test:integration` — aprovado: 7 testes, 91 expectations, 0 falhas, contra PostgreSQL e LocalStack reais na rede Compose.
-- `docker compose up -d --force-recreate localstack` — aprovado: o hook `init-queues.sh` criou automaticamente as filas após boot limpo.
-- A porta `5432` do host pertence a outro PostgreSQL local; para evitar conectá-lo, a execução de integração ocorreu na rede Compose. `POSTGRES_HOST_PORT` torna esse mapeamento configurável para execução host futura.
+- `bun run test:integration` — aprovado: 7 testes, 91 expectations, 0 falhas, executado no host contra PostgreSQL e LocalStack reais expostos pelo Compose em `55432`/`45666`.
+- `bun run test:critical` — aprovado: 27 testes, 151 expectations, 0 falhas. O cenário SQS de long poll declara timeout realista de 30 s, em vez do default de 5 s do Bun.
+- O healthcheck do LocalStack consulta as três filas exigidas, portanto `migrate` e workers não iniciam na janela entre o health genérico e o hook `ready.d`.
+- A porta `5432` do host pertence a outro PostgreSQL local; o mapeamento não convencional e os defaults do código/teste evitam conectá-lo.
 - Varredura estática: não há `parseFloat`, `toBeCloseTo`, `float`, `double` ou `TODO`/`FIXME` de requisito obrigatório em `src` e `test`; a composição de SQL variável usa somente fragmentos constantes e todos os valores de entrada vão como parâmetros.
 
 ## Cobertura distribuída exigida
@@ -61,6 +62,5 @@ Esta matriz segue a hierarquia `INSTRUCOES.txt > código/testes executáveis > g
 
 **PRONTO PARA SUBMISSÃO.** Todas as evidências obrigatórias, inclusive
 PostgreSQL, LocalStack/SQS, Compose, múltiplos processos, crash/restart e
-reconciliação, foram executadas com sucesso. A única particularidade local é
-um PostgreSQL externo usando a porta `5432`; ela não afeta a stack nem a prova
-real executada dentro da rede Compose.
+reconciliação, foram executadas com sucesso. Um PostgreSQL externo na porta
+`5432` não afeta a stack: Compose, runtime e testes usam `55432` por padrão.

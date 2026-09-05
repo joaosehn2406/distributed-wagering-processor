@@ -119,9 +119,11 @@ two publishers, pending-reference recovery, crash after commit/before ACK and
 exact reconciliation. `/health/live`, `/health/ready` and `/metrics` also
 responded against the running stack.
 
-This host has a separate PostgreSQL process on host port `5432`, so the proof
-used `docker compose run --rm --no-deps api bun run test:integration` rather
-than accidentally testing that external database. `POSTGRES_HOST_PORT` and
-`LOCALSTACK_HOST_PORT` make host mappings configurable when direct host test
-execution is preferred. The evidence and exact results are recorded in
-`IMPLEMENTATION_STATUS.md` and `VALIDACAO_FINAL.md`.
+The Compose defaults deliberately map PostgreSQL to host `55432` and LocalStack
+to host `45666`, while containers retain `postgres:5432` and
+`localstack:4566` internally. This avoids accidental use of an unrelated local
+PostgreSQL/SQS emulator on the conventional ports. The API mapping is similarly
+configurable through `API_HOST_PORT`. A clean forced recreation and the full
+integration suite were executed directly from the host through these mappings;
+the evidence and exact results are recorded in `IMPLEMENTATION_STATUS.md` and
+`VALIDACAO_FINAL.md`.

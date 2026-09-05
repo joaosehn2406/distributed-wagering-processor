@@ -10,19 +10,21 @@ docker compose ps
 ```
 
 On a clean machine this is the complete local stack. It requires Docker Engine
-to be running and ports `5432`, `4566` and `3000` to be free. After the
-services are healthy, verify the API with `curl http://localhost:3000/health/ready`
-and `curl http://localhost:3000/metrics`. `docker compose config --quiet`
-validates the Compose model without starting containers.
+and the host ports `55432`, `45666` and `3000` to be free. PostgreSQL and
+LocalStack intentionally do not use their common host ports, so existing local
+services on `5432` or `4566` are not selected accidentally. After the services
+are healthy, verify the API with `curl http://localhost:3000/health/ready` and
+`curl http://localhost:3000/metrics`. `docker compose config --quiet` validates
+the Compose model without starting containers.
 
-If another local PostgreSQL or SQS emulator owns a host port, Compose exposes
-configurable host mappings without changing the container network. For example,
-on PowerShell use `$env:POSTGRES_HOST_PORT='5433'` before `docker compose up`;
-then run host integration tests with
-`$env:INTEGRATION_DATABASE_URL='postgresql://wager:wager@localhost:5433/wagering'`.
-Likewise, set `LOCALSTACK_HOST_PORT` and `SQS_ENDPOINT` together when changing
-the LocalStack host port. The application containers continue to use
-`postgres:5432` and `localstack:4566` internally.
+All host defaults are aligned in `docker-compose.yml`, `.env.example`, runtime
+configuration and integration-test helpers: PostgreSQL is
+`postgresql://wager:wager@localhost:55432/wagering`, and LocalStack is
+`http://localhost:45666`. The application containers always use
+`postgres:5432` and `localstack:4566` on their private Docker network. If any
+of the safe defaults is occupied, copy `.env.example` to `.env`, change the
+matching host port and every matching host URL as one set, then run Compose
+again. `API_HOST_PORT` changes only the API host mapping.
 
 Compose starts six independent application processes after the one-shot migration
 service: `api`, `sqs-consumer`, `outbox-publisher-a`, `outbox-publisher-b`, and
@@ -86,13 +88,15 @@ bun run test:critical
 `bun run test:integration` is opt-in through its package script and creates a
 disposable PostgreSQL database plus disposable LocalStack FIFO queues. It needs
 an administrative PostgreSQL endpoint whose credentials can create/drop a
-database; use `INTEGRATION_DATABASE_URL` when it differs from
-`postgresql://wager:wager@localhost:5432/wagering`. It also needs LocalStack at
-`SQS_ENDPOINT` (default `http://localhost:4566`). `bun run test:critical` runs
-the unit and integration suites together and has the same external requirement.
+database; its aligned default is
+`postgresql://wager:wager@localhost:55432/wagering`. It also needs LocalStack
+at `SQS_ENDPOINT` (default `http://localhost:45666`). `bun run test:critical`
+runs the unit and integration suites together and has the same external
+requirement. This command was executed successfully from the host against the
+Compose services.
 
-If host port `5432` belongs to another PostgreSQL, run the same real suite
-inside the Compose network instead of touching that external service:
+To execute the same integration suite from inside the private Compose network
+(for example, in a CI runner that does not publish host ports), use:
 
 ```bash
 docker compose run --rm --no-deps api bun run test:integration

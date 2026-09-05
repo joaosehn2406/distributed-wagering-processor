@@ -356,4 +356,7 @@ integration(
       await deleteTestQueues(queues);
     }
   },
+  // Three SQS long polls can legitimately consume more than Bun's 5s default
+  // when this real-service scenario runs alongside the rest of test:critical.
+  { timeout: 30_000 },
 );

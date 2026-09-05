@@ -47,23 +47,23 @@ PostgreSQL e LocalStack reais na rede Docker Compose. Não foi encontrado P0/P1.
 | Reconciliação exata em todo cenário financeiro                              | `reconcile-wallet.use-case.ts`, `test/support/postgres.ts`                                                              | todos os arquivos em `test/integration/*.test.ts` financeiros                        | IMPLEMENTADO E VALIDADO | A soma PostgreSQL `NUMERIC` permaneceu exata em todos os cenários.                                                                |
 | DTOs, erros HTTP estáveis e cursor de ledger                                | `http.dto.ts`, `http.controller.ts`, `http-error.ts`, `http-exception.filter.ts`                                        | `http-contract.test.ts`, `process-crash-recovery.test.ts`                            | IMPLEMENTADO E VALIDADO | Contrato unitário e fluxo HTTP real passaram.                                                                                     |
 | Logs JSON, métricas de negócio e health checks                              | `structured-logger.ts`, `metrics.service.ts`, `health.service.ts`                                                       | `observability.test.ts`, `process-crash-recovery.test.ts`, Compose                   | IMPLEMENTADO E VALIDADO | Readiness real PostgreSQL/SQS e métricas passaram.                                                                                |
-| Papéis escaláveis, Docker e setup reproduzível                              | `docker-compose.yml`, `Dockerfile`, `.env.example`, `.gitattributes`, `scripts/localstack/init-queues.sh`, `README.md`  | `docker compose config --quiet`                                                      | IMPLEMENTADO E VALIDADO | Portas host são configuráveis; scripts LocalStack são fixados em LF para checkout Windows.                                        |
+| Papéis escaláveis, Docker e setup reproduzível                              | `docker-compose.yml`, `Dockerfile`, `.env.example`, `.gitattributes`, `scripts/localstack/init-queues.sh`, `README.md`  | `docker compose config --quiet`; `docker compose up -d --build --force-recreate`     | IMPLEMENTADO E VALIDADO | Defaults isolados: PostgreSQL `55432`, LocalStack `45666`; healthcheck espera as filas e scripts LocalStack são LF no Windows.    |
 | Autenticação fora de escopo com extensão explícita                          | `noop-auth.guard.ts`, `app.module.ts`, `ARCHITECTURE.md`                                                                | `noop-auth.guard.test.ts`                                                            | IMPLEMENTADO E VALIDADO | Não há autenticação local; trocar por guard/porta OIDC é o ponto de extensão declarado.                                           |
 | Documentação consistente e sem caminhos legados                             | `README.md`, `ARCHITECTURE.md`, `IMPLEMENTATION_STATUS.md`, este arquivo                                                | varredura de links/caminhos e `bun run format:check`                                 | IMPLEMENTADO E VALIDADO | A arquitetura não referencia mais ADR fora do repositório; o enunciado histórico no README é conteúdo, não instrução operacional. |
 
 ## Verificações executadas
 
-| Comando                                                          | Resultado nesta revisão | Evidência/limite                                                        |
-| ---------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------- |
-| `bun run build`                                                  | Aprovado                | Compilação TypeScript concluída.                                        |
-| `bun run lint`                                                   | Aprovado                | ESLint sem erros.                                                       |
-| `bun run format:check`                                           | Aprovado                | Prettier sem divergências.                                              |
-| `bun run test:unit`                                              | Aprovado                | 20 testes, 60 expectations, 0 falhas.                                   |
-| `docker compose config --quiet`                                  | Aprovado                | Compose parseado/validado.                                              |
-| `docker compose up -d --build`                                   | Aprovado                | PostgreSQL/LocalStack saudáveis e todos os roles em execução.           |
-| `GET /health/live`, `/health/ready`, `/metrics`                  | Aprovado                | API respondeu `ok`; readiness confirmou PostgreSQL e as três filas.     |
-| `docker compose run --rm --no-deps api bun run test:integration` | Aprovado                | 7 testes, 91 expectations, 0 falhas contra PostgreSQL/LocalStack reais. |
-| `docker compose up -d --force-recreate localstack`               | Aprovado                | Boot limpo executou o hook em LF e recriou as filas.                    |
+| Comando                                         | Resultado nesta revisão | Evidência/limite                                                                           |
+| ----------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| `bun run build`                                 | Aprovado                | Compilação TypeScript concluída.                                                           |
+| `bun run lint`                                  | Aprovado                | ESLint sem erros.                                                                          |
+| `bun run format:check`                          | Aprovado                | Prettier sem divergências.                                                                 |
+| `bun run test:unit`                             | Aprovado                | 20 testes, 60 expectations, 0 falhas.                                                      |
+| `docker compose config --quiet`                 | Aprovado                | Compose parseado/validado.                                                                 |
+| `docker compose up -d --build --force-recreate` | Aprovado                | PostgreSQL em `55432`, LocalStack em `45666` e todos os roles em execução.                 |
+| `GET /health/live`, `/health/ready`, `/metrics` | Aprovado                | API respondeu `ok`; readiness confirmou PostgreSQL e as três filas.                        |
+| `bun run test:integration`                      | Aprovado                | 7 testes, 91 expectations, 0 falhas no host contra PostgreSQL/LocalStack reais do Compose. |
+| `bun run test:critical`                         | Aprovado                | 27 testes, 151 expectations, 0 falhas; inclui unitários e toda a integração real.          |
 
 ## Varredura final
 
@@ -82,7 +82,6 @@ PostgreSQL e LocalStack reais na rede Docker Compose. Não foi encontrado P0/P1.
 
 **PRONTO PARA SUBMISSÃO.** Não há requisito obrigatório pendente, defeito P0/P1
 conhecido ou documentação contraditória. A infraestrutura e a suíte integrada
-foram executadas com sucesso. O host possui outro PostgreSQL na porta `5432`,
-por isso a prova de integração foi executada corretamente de dentro da rede
-Compose; `POSTGRES_HOST_PORT` permite escolher outra porta para rodar a mesma
-suíte diretamente no host.
+foram executadas com sucesso diretamente do host. O host possui outro
+PostgreSQL na porta `5432`, mas Compose, runtime e testes do projeto usam
+`55432` por padrão e não o selecionam acidentalmente.

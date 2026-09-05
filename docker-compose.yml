@@ -40,7 +40,10 @@ services:
       POSTGRES_DB: wagering
       POSTGRES_USER: wager
       POSTGRES_PASSWORD: wager
-    ports: ['${POSTGRES_HOST_PORT:-5432}:5432']
+    # Host mappings are only for local tools. Application containers use
+    # postgres:5432, so these deliberately non-default host ports avoid
+    # colliding with an existing developer PostgreSQL/LocalStack installation.
+    ports: ['${POSTGRES_HOST_PORT:-55432}:5432']
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U wager -d wagering']
       interval: 3s
@@ -52,12 +55,18 @@ services:
     environment:
       SERVICES: sqs
       AWS_DEFAULT_REGION: us-east-1
-    ports: ['${LOCALSTACK_HOST_PORT:-4566}:4566']
+    ports: ['${LOCALSTACK_HOST_PORT:-45666}:4566']
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./scripts/localstack:/etc/localstack/init/ready.d
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:4566/_localstack/health']
+      # A generic LocalStack health response can precede execution of the
+      # ready.d hook. Consumers must start only after all required queues exist.
+      test:
+        [
+          'CMD-SHELL',
+          'awslocal sqs get-queue-url --queue-name wager-transactions.fifo >/dev/null && awslocal sqs get-queue-url --queue-name wager-transactions-dlq.fifo >/dev/null && awslocal sqs get-queue-url --queue-name wallet-events.fifo >/dev/null',
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -80,7 +89,7 @@ services:
       APP_ROLE: api
       APP_INSTANCE_ID: api-1
       PORT: 3000
-    ports: ['3000:3000']
+    ports: ['${API_HOST_PORT:-3000}:3000']
     restart: unless-stopped
     depends_on: *application-depends-on
 

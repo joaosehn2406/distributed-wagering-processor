@@ -6,7 +6,7 @@ import {
   SQSClient,
 } from '@aws-sdk/client-sqs';
 
-const endpoint = process.env.SQS_ENDPOINT ?? 'http://localhost:4566';
+const endpoint = process.env.SQS_ENDPOINT ?? 'http://localhost:45666';
 const region = process.env.AWS_REGION ?? 'us-east-1';
 
 export interface TestQueues {

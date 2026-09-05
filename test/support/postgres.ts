@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 
-const defaultDatabaseUrl = 'postgresql://wager:wager@localhost:5432/wagering';
+const defaultDatabaseUrl = 'postgresql://wager:wager@localhost:55432/wagering';
 
 /**
  * Uses a disposable database instead of the developer's database. The caller
