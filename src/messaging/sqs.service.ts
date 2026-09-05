@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { loadEnvironment } from '../config/environment.js';
 
@@ -23,13 +24,21 @@ export class SqsService {
       }),
     );
   }
-  async dlq(body: string, messageId: string): Promise<void> {
+  async dlq(body: string, messageId: string, reason: string): Promise<void> {
     await this.client.send(
       new SendMessageCommand({
         QueueUrl: this.env.wagerDlqQueueUrl,
         MessageBody: body,
         MessageGroupId: 'invalid-envelope',
-        MessageDeduplicationId: messageId,
+        // Envelope message IDs may be 255 chars while SQS FIFO accepts at most
+        // 128 chars for a deduplication ID. Keep the original in attributes.
+        MessageDeduplicationId: createHash('sha256')
+          .update(`dlq:${reason}:${messageId}`, 'utf8')
+          .digest('hex'),
+        MessageAttributes: {
+          failureReason: { DataType: 'String', StringValue: reason },
+          logicalMessageId: { DataType: 'String', StringValue: messageId },
+        },
       }),
     );
   }

@@ -4,7 +4,8 @@ import { Money } from '../../shared/domain/money.js';
 import { OutboxMessage } from '../../outbox/domain/outbox-message.js';
 import type { IntegrationEvent } from '../../outbox/domain/integration-event.js';
 import { InboxMessage } from '../../messaging/domain/inbox-message.js';
-import { Wallet, type BalanceMovement } from '../../wallet/domain/wallet.js';
+import { Wallet } from '../../wallet/domain/wallet.js';
+import { WalletLedgerEntry } from '../../wallet/domain/wallet-ledger-entry.js';
 import {
   WagerTransaction,
   type WagerState,
@@ -124,6 +125,18 @@ export class WagerRepository {
     );
     return row ? wagerOf(row) : undefined;
   }
+  static async findProcessedReversal(
+    em: EntityManager,
+    referenceTransactionId: string,
+    kind: 'REFUND' | 'ROLLBACK',
+  ): Promise<WagerTransaction | undefined> {
+    const row = await one(
+      em,
+      "SELECT * FROM wager_transactions WHERE reference_transaction_id=? AND kind=? AND status='PROCESSED'",
+      [referenceTransactionId, kind],
+    );
+    return row ? wagerOf(row) : undefined;
+  }
   static async lockWager(em: EntityManager, id: string): Promise<WagerTransaction | undefined> {
     const row = await one(em, 'SELECT * FROM wager_transactions WHERE id = ? FOR UPDATE', [id]);
     return row ? wagerOf(row) : undefined;
@@ -207,24 +220,19 @@ export class WagerRepository {
       ],
     );
   }
-  static async insertLedger(
-    em: EntityManager,
-    walletId: string,
-    transactionId: string,
-    movement: BalanceMovement,
-  ): Promise<void> {
+  static async insertLedger(em: EntityManager, entry: WalletLedgerEntry): Promise<void> {
     await em.execute(
       'INSERT INTO wallet_ledger_entries(id,wallet_id,transaction_id,direction,amount,currency,balance_before,balance_after,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
       [
-        randomUUID(),
-        walletId,
-        transactionId,
-        movement.direction,
-        movement.amount.toString(),
-        movement.amount.currency,
-        movement.balanceBefore.toString(),
-        movement.balanceAfter.toString(),
-        new Date(),
+        entry.id,
+        entry.walletId,
+        entry.transactionId,
+        entry.direction,
+        entry.money.toString(),
+        entry.money.currency,
+        entry.balanceBefore.toString(),
+        entry.balanceAfter.toString(),
+        entry.createdAt,
       ],
     );
   }

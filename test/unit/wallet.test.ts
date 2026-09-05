@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Wallet } from '../../src/wallet/domain/wallet.js';
+import { WalletLedgerEntry } from '../../src/wallet/domain/wallet-ledger-entry.js';
 import { Money } from '../../src/shared/domain/money.js';
 
 describe('Wallet', () => {
@@ -32,5 +33,39 @@ describe('Wallet', () => {
     expect(() => w.debit(Money.fromContract({ amount: '10.01', currency: 'BRL' }))).toThrow(
       'INSUFFICIENT_FUNDS',
     );
+  });
+  test('creates an immutable and balanced ledger entry', () => {
+    const before = Money.fromContract({ amount: '100.00', currency: 'BRL' });
+    const money = Money.fromContract({ amount: '25.00', currency: 'BRL' });
+    const after = Money.fromContract({ amount: '75.00', currency: 'BRL' });
+    const entry = WalletLedgerEntry.create({
+      walletId: 'wallet',
+      transactionId: 'transaction',
+      direction: 'DEBIT',
+      money,
+      balanceBefore: before,
+      balanceAfter: after,
+    });
+    expect(entry.isBalanced()).toBe(true);
+    expect(() =>
+      WalletLedgerEntry.create({
+        walletId: 'wallet',
+        transactionId: 'invalid-transaction',
+        direction: 'DEBIT',
+        money,
+        balanceBefore: before,
+        balanceAfter: before,
+      }),
+    ).toThrow('INVALID_LEDGER_ARITHMETIC');
+    expect(() =>
+      WalletLedgerEntry.create({
+        walletId: 'wallet',
+        transactionId: 'wrong-currency',
+        direction: 'CREDIT',
+        money,
+        balanceBefore: before,
+        balanceAfter: Money.fromContract({ amount: '125.00', currency: 'USD' }),
+      }),
+    ).toThrow('CURRENCY_MISMATCH');
   });
 });

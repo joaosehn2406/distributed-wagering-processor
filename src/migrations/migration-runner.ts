@@ -1,9 +1,10 @@
 import { MikroORM } from '@mikro-orm/postgresql';
 import { migration0001 } from './Migration0001Initial.js';
 import { migration0002 } from './Migration0002OutboxLeases.js';
+import { migration0003 } from './Migration0003FinancialGuardrails.js';
 import { SchemaMigrationEntity } from '../shared/infrastructure/schema-migration.entity.js';
 
-const migrations = [migration0001, migration0002] as const;
+const migrations = [migration0001, migration0002, migration0003] as const;
 
 export type MigrationCommand = 'up' | 'down';
 

@@ -2,7 +2,6 @@
 export const migration0001 = {
   name: '0001_initial',
   up: `
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS schema_migrations (name varchar(100) PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE wallets (
  id uuid PRIMARY KEY, player_id uuid NOT NULL, currency char(3) NOT NULL, balance numeric(20,2) NOT NULL,

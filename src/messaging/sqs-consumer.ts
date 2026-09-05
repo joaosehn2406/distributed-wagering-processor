@@ -125,10 +125,13 @@ export class SqsConsumer implements OnModuleInit, OnModuleDestroy {
           process.exit(86);
         }
       } catch (error) {
-        if (
-          error instanceof InboxInProgressError ||
-          (error instanceof DomainError && error.code === 'TRANSIENT_UNIQUE_RACE')
-        ) {
+        if (error instanceof InboxInProgressError) {
+          // Another delivery still owns an uncommitted Inbox claim. It is not a
+          // poisoned message and must never consume the DLQ retry budget.
+          await this.retryWhileInboxInProgress(receipt, envelope);
+          return;
+        }
+        if (error instanceof DomainError && error.code === 'TRANSIENT_UNIQUE_RACE') {
           await this.retryOrDlq(body, envelope.messageId, receipt, receiveCount);
           return;
         }
@@ -273,7 +276,7 @@ export class SqsConsumer implements OnModuleInit, OnModuleDestroy {
     receipt: string | undefined,
     reason: 'permanent_payload' | 'retry_exhausted' | 'inbox_conflict',
   ): Promise<void> {
-    await this.sqs.dlq(body, messageId);
+    await this.sqs.dlq(body, messageId, reason);
     businessMetrics.recordDlq(reason);
     writeJsonLog('warn', 'sqs.message_dead_lettered', {
       messageId,
@@ -316,6 +319,36 @@ export class SqsConsumer implements OnModuleInit, OnModuleDestroy {
       messageId,
       component: 'sqs_consumer',
       code: 'TRANSIENT_FAILURE',
+      retryable: true,
+    });
+    await this.sqs.client.send(
+      new ChangeMessageVisibilityCommand({
+        QueueUrl: this.env.wagerQueueUrl,
+        ReceiptHandle: receipt,
+        VisibilityTimeout: Number(visibilitySeconds),
+      }),
+    );
+  }
+
+  private async retryWhileInboxInProgress(
+    receipt: string | undefined,
+    envelope: Envelope,
+  ): Promise<void> {
+    if (!receipt) throw new Error('SQS receipt is required to defer an Inbox claim');
+    const milliseconds = exponentialBackoffMilliseconds(
+      1n,
+      this.env.sqsRetryBackoffBaseSeconds,
+      this.env.sqsRetryBackoffMaxSeconds,
+    );
+    const visibilitySeconds = (milliseconds + 999n) / 1_000n;
+    businessMetrics.recordRetry('sqs_consumer');
+    writeJsonLog('info', 'sqs.inbox_in_progress_deferred', {
+      correlationId: envelope.correlationId,
+      messageId: envelope.messageId,
+      walletId: envelope.data.walletId,
+      providerId: envelope.data.providerId,
+      component: 'sqs_consumer',
+      code: 'INBOX_IN_PROGRESS',
       retryable: true,
     });
     await this.sqs.client.send(

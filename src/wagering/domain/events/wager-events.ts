@@ -1,5 +1,6 @@
 import type { MoneyProps } from '../../../shared/domain/money.js';
-import type { BalanceMovement, Wallet } from '../../../wallet/domain/wallet.js';
+import type { Wallet } from '../../../wallet/domain/wallet.js';
+import type { WalletLedgerEntry } from '../../../wallet/domain/wallet-ledger-entry.js';
 import {
   IntegrationEvent,
   type IntegrationEventProps,
@@ -138,7 +139,7 @@ export class WalletBalanceChangedEvent extends IntegrationEvent<WalletBalanceCha
   static from(
     wallet: Wallet,
     transaction: WagerTransaction,
-    movement: BalanceMovement,
+    entry: WalletLedgerEntry,
     context: EventContext,
   ): WalletBalanceChangedEvent {
     return new WalletBalanceChangedEvent({
@@ -149,10 +150,10 @@ export class WalletBalanceChangedEvent extends IntegrationEvent<WalletBalanceCha
       data: {
         walletId: wallet.id,
         transactionId: transaction.id,
-        direction: movement.direction,
-        money: movement.amount.toJSON(),
-        balanceBefore: movement.balanceBefore.toJSON(),
-        balanceAfter: movement.balanceAfter.toJSON(),
+        direction: entry.direction,
+        money: entry.money.toJSON(),
+        balanceBefore: entry.balanceBefore.toJSON(),
+        balanceAfter: entry.balanceAfter.toJSON(),
         walletVersion: wallet.version.toString(),
       },
     });

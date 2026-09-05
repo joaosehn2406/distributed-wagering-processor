@@ -9,16 +9,26 @@ docker compose up -d --build
 docker compose ps
 ```
 
+On a clean machine this is the complete local stack. It requires Docker Engine
+to be running and ports `5432`, `4566` and `3000` to be free. After the
+services are healthy, verify the API with `curl http://localhost:3000/health/ready`
+and `curl http://localhost:3000/metrics`. `docker compose config --quiet`
+validates the Compose model without starting containers.
+
 Compose starts six independent application processes after the one-shot migration
 service: `api`, `sqs-consumer`, `outbox-publisher-a`, `outbox-publisher-b`, and
 `pending-worker` (plus `migrate`). The two publishers are intentional: leases in
 PostgreSQL, rather than a singleton process, coordinate the transactional outbox.
 
-For a host-based development session, copy `.env.example`, run the migration once,
-and launch each role in a separate terminal. `APP_INSTANCE_ID` must differ for
-each publisher.
+For a host-based development session, start only its dependencies, copy the
+environment template, run the migration once, and launch each role in a
+separate terminal. `APP_INSTANCE_ID` must differ for each publisher. Do not
+start the Compose `api` service in this mode, because it would occupy port
+`3000`.
 
 ```bash
+docker compose up -d postgres localstack
+cp .env.example .env
 bun run migration:up
 APP_ROLE=api APP_INSTANCE_ID=api-local bun src/main.ts
 APP_ROLE=sqs-consumer APP_INSTANCE_ID=consumer-local bun src/main.ts
@@ -26,6 +36,11 @@ APP_ROLE=outbox-publisher APP_INSTANCE_ID=publisher-a bun src/main.ts
 APP_ROLE=outbox-publisher APP_INSTANCE_ID=publisher-b bun src/main.ts
 APP_ROLE=pending-worker APP_INSTANCE_ID=pending-local bun src/main.ts
 ```
+
+In PowerShell, the copy command is `Copy-Item .env.example .env`. Bun loads the
+resulting `.env` file for these commands. For another PostgreSQL/LocalStack
+installation, set `DATABASE_URL`, `SQS_ENDPOINT` and the three queue URLs in
+that file before running a migration or process.
 
 The API keeps request correlation in `X-Correlation-Id` (or creates one) and
 returns that identifier in every success/error response. Money must always be a
@@ -54,19 +69,38 @@ bun run build
 bun run lint
 bun run format:check
 bun run test:unit
-RUN_INTEGRATION=true bun test test/integration/financial-core.test.ts test/integration/migrations.test.ts test/integration/schema-guardrails.test.ts test/integration/distributed-delivery.test.ts
-RUN_INTEGRATION=true bun test test/integration/process-crash-recovery.test.ts
+docker compose config --quiet
+bun run test:integration
 bun run test:critical
 ```
 
-The process-recovery test launches an API, a consumer and two publisher processes,
-sets the guarded `CRASH_AFTER_COMMIT_BEFORE_ACK_MESSAGE_ID` hook only in the
-crashing test consumer, expects exit code `86`, and verifies redelivery, Inbox
-deduplication, competing outbox leases and ledger reconciliation. The hook is
-rejected unless `RUN_CRASH_TEST=true`; it is not a production setting.
+`bun run test:integration` is opt-in through its package script and creates a
+disposable PostgreSQL database plus disposable LocalStack FIFO queues. It needs
+an administrative PostgreSQL endpoint whose credentials can create/drop a
+database; use `INTEGRATION_DATABASE_URL` when it differs from
+`postgresql://wager:wager@localhost:5432/wagering`. It also needs LocalStack at
+`SQS_ENDPOINT` (default `http://localhost:4566`). `bun run test:critical` runs
+the unit and integration suites together and has the same external requirement.
 
-Every financial integration test ends by reconstructing the wallet balance from
-the signed immutable ledger and asserting equality with the stored balance.
+When executed against those real services, the process-recovery test launches
+an API, a consumer and two publisher processes, sets the guarded
+`CRASH_AFTER_COMMIT_BEFORE_ACK_MESSAGE_ID` hook only in the crashing test
+consumer, expects exit code `86`, and verifies redelivery, Inbox deduplication,
+competing outbox leases and ledger reconciliation. The hook is rejected unless
+`RUN_CRASH_TEST=true`; it is not a production setting.
+
+Every financial integration test is written to end by reconstructing the wallet
+balance from the signed immutable ledger and asserting equality with the stored
+balance. See `IMPLEMENTATION_STATUS.md` and `VALIDACAO_FINAL.md` for the
+executed-versus-pending evidence in the current environment.
+`concurrency.test.ts` opens three independent ORM/database connections, sends a
+single BET 50 times in parallel, exercises the `80.00` vs `100.00` hot-wallet
+race, and proves that a second wallet progresses independently.
+`three-process-wallet-race.test.ts` starts three independent `APP_ROLE=all`
+Nest/Bun processes on separate ports, proves the 50-duplicate and hot-wallet
+scenarios through HTTP, then submits an SQS command to the same shared queues.
+DLQ messages retain the original body and carry `failureReason` and
+`logicalMessageId` SQS attributes for operational diagnosis.
 
 ---
 

@@ -53,7 +53,12 @@ export async function deleteTestQueues(queues: TestQueues): Promise<void> {
 
 export async function receiveOne(client: SQSClient, QueueUrl: string) {
   const result = await client.send(
-    new ReceiveMessageCommand({ QueueUrl, WaitTimeSeconds: 2, MaxNumberOfMessages: 1 }),
+    new ReceiveMessageCommand({
+      QueueUrl,
+      WaitTimeSeconds: 2,
+      MaxNumberOfMessages: 1,
+      MessageAttributeNames: ['All'],
+    }),
   );
   return result.Messages?.[0];
 }

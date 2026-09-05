@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Money } from '../../src/shared/domain/money.js';
 import { Wallet } from '../../src/wallet/domain/wallet.js';
+import { WalletLedgerEntry } from '../../src/wallet/domain/wallet-ledger-entry.js';
 import { WagerTransaction } from '../../src/wagering/domain/wager-transaction.js';
 import {
   WalletBalanceChangedEvent,
@@ -33,8 +34,16 @@ test('serializes a versioned event envelope with decimal-string money', () => {
   );
   const movement = wallet.debit(Money.fromContract({ amount: '25.00', currency: 'BRL' }));
   transaction.processed(wallet.balance, wallet.version);
+  const entry = WalletLedgerEntry.create({
+    walletId: wallet.id,
+    transactionId: transaction.id,
+    direction: movement.direction,
+    money: movement.amount,
+    balanceBefore: movement.balanceBefore,
+    balanceAfter: movement.balanceAfter,
+  });
 
-  const event = WalletBalanceChangedEvent.from(wallet, transaction, movement, {
+  const event = WalletBalanceChangedEvent.from(wallet, transaction, entry, {
     correlationId: 'correlation-id',
     causationId: 'message-id',
     occurredAt: new Date('2026-09-04T00:00:00.000Z'),

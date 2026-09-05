@@ -12,7 +12,8 @@ import {
 import { loadEnvironment } from '../../config/environment.js';
 import { businessMetrics } from '../../shared/infrastructure/metrics.service.js';
 import { writeJsonLog } from '../../shared/infrastructure/structured-logger.js';
-import type { BalanceMovement, Wallet } from '../../wallet/domain/wallet.js';
+import type { Wallet } from '../../wallet/domain/wallet.js';
+import { WalletLedgerEntry } from '../../wallet/domain/wallet-ledger-entry.js';
 import { WagerTransaction, type WagerInput, type WagerKind } from '../domain/wager-transaction.js';
 import { WagerRepository } from '../infrastructure/wager.repository.js';
 import {
@@ -23,7 +24,8 @@ import {
 } from '../domain/events/wager-events.js';
 import type { InboxClaim, SubmitCommand, SubmitResult } from './contracts.js';
 
-const reversals = new Set<WagerKind>(['REFUND', 'ROLLBACK']);
+const isReversal = (kind: WagerKind): kind is 'REFUND' | 'ROLLBACK' =>
+  kind === 'REFUND' || kind === 'ROLLBACK';
 const uuid = () => randomUUID();
 
 export class ConflictError extends DomainError {}
@@ -166,7 +168,7 @@ export class SubmitWagerTransactionUseCase {
       const wallet = await WagerRepository.lockWallet(em, transaction.snapshot.walletId);
       if (!wallet) throw new DomainError('WALLET_NOT_FOUND');
       const state = transaction.snapshot;
-      let movement: BalanceMovement | undefined;
+      let movement: WalletLedgerEntry | undefined;
       if (state.referenceExpiresAt && state.referenceExpiresAt <= new Date())
         transaction.rejected('REFERENCE_NOT_FOUND', wallet.balance, wallet.version);
       else if (state.referenceAttempts >= this.env.pendingMaxAttempts)
@@ -197,7 +199,7 @@ export class SubmitWagerTransactionUseCase {
     em: EntityManager,
     wallet: Wallet,
     transaction: WagerTransaction,
-  ): Promise<BalanceMovement | undefined> {
+  ): Promise<WalletLedgerEntry | undefined> {
     const s = transaction.snapshot;
     try {
       let reference: WagerTransaction | undefined;
@@ -207,11 +209,18 @@ export class SubmitWagerTransactionUseCase {
           s.providerId,
           s.referenceExternalTransactionId,
         );
-      if (reversals.has(s.kind) && !reference) {
+      if (isReversal(s.kind) && !reference) {
         this.markPendingReference(transaction, wallet);
         return undefined;
       }
-      if (reference) this.assertReference(transaction, reference);
+      if (reference) {
+        this.assertReference(transaction, reference);
+        if (
+          isReversal(s.kind) &&
+          (await WagerRepository.findProcessedReversal(em, reference.id, s.kind))
+        )
+          throw new DomainError('REFERENCE_ALREADY_REVERSED');
+      }
       if (s.kind === 'BET') return await this.move(em, wallet, transaction, 'DEBIT');
       if (s.kind === 'WIN') return await this.move(em, wallet, transaction, 'CREDIT');
       if (s.kind === 'LOSS') {
@@ -248,15 +257,23 @@ export class SubmitWagerTransactionUseCase {
     transaction: WagerTransaction,
     direction: 'CREDIT' | 'DEBIT',
     referenceId?: string,
-  ): Promise<BalanceMovement> {
+  ): Promise<WalletLedgerEntry> {
     const movement =
       direction === 'CREDIT'
         ? wallet.credit(transaction.snapshot.money)
         : wallet.debit(transaction.snapshot.money);
     transaction.processed(wallet.balance, wallet.version, referenceId);
+    const entry = WalletLedgerEntry.create({
+      walletId: wallet.id,
+      transactionId: transaction.id,
+      direction: movement.direction,
+      money: movement.amount,
+      balanceBefore: movement.balanceBefore,
+      balanceAfter: movement.balanceAfter,
+    });
     await WagerRepository.updateWallet(em, wallet);
-    await WagerRepository.insertLedger(em, wallet.id, transaction.id, movement);
-    return movement;
+    await WagerRepository.insertLedger(em, entry);
+    return entry;
   }
 
   private assertReference(transaction: WagerTransaction, reference: WagerTransaction): void {
@@ -274,6 +291,7 @@ export class SubmitWagerTransactionUseCase {
     if (!a.money.equals(b.money)) throw new DomainError('REFERENCE_AMOUNT_MISMATCH');
     if (a.kind === 'REFUND' && b.kind !== 'BET')
       throw new DomainError('REFERENCE_KIND_NOT_ALLOWED');
+    if (a.kind === 'WIN' && b.kind !== 'BET') throw new DomainError('REFERENCE_KIND_NOT_ALLOWED');
     if (a.kind === 'ROLLBACK' && !['BET', 'WIN', 'REFUND'].includes(b.kind))
       throw new DomainError('REFERENCE_KIND_NOT_ALLOWED');
   }
@@ -355,7 +373,7 @@ export class SubmitWagerTransactionUseCase {
     em: EntityManager,
     tx: WagerTransaction,
     wallet: Wallet,
-    movement: BalanceMovement | undefined,
+    movement: WalletLedgerEntry | undefined,
     correlationId: string,
     causationId?: string,
   ): Promise<void> {

@@ -13,6 +13,8 @@ const MAX_INTEGER_DIGITS = 18;
 
 /** Exact, immutable money. Decimal never crosses an adapter boundary. */
 export class Money {
+  private static readonly zeroValue = new Decimal('0.00');
+
   private constructor(
     private readonly value: Decimal,
     public readonly currency: string,
@@ -67,7 +69,7 @@ export class Money {
     return this.value.isZero();
   }
   isPositive(): boolean {
-    return this.value.greaterThan(0);
+    return this.value.greaterThan(Money.zeroValue);
   }
   isNegative(): boolean {
     return this.value.isNegative();

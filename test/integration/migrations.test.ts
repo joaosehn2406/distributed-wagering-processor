@@ -14,9 +14,32 @@ integration('migration runner supports up, repeated up, down, and up again', asy
     await client.connect();
     try {
       const applied = await client.query('SELECT name FROM schema_migrations ORDER BY name');
-      expect(applied.rows).toEqual([{ name: '0001_initial' }, { name: '0002_outbox_leases' }]);
+      expect(applied.rows).toEqual([
+        { name: '0001_initial' },
+        { name: '0002_outbox_leases' },
+        { name: '0003_financial_guardrails' },
+      ]);
       expect((await client.query("SELECT to_regclass('wallets') AS object")).rows[0]?.object).toBe(
         'wallets',
+      );
+
+      await runMigrations(databaseUrl, 'down');
+      expect(
+        (
+          await client.query(
+            "SELECT conname FROM pg_constraint WHERE conname='outbox_envelope_matches_columns_ck'",
+          )
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (
+          await client.query(
+            "SELECT conname FROM pg_constraint WHERE conname='wager_terminal_snapshot_ck'",
+          )
+        ).rows,
+      ).toEqual([]);
+      expect((await client.query('SELECT name FROM schema_migrations ORDER BY name')).rows).toEqual(
+        [{ name: '0001_initial' }, { name: '0002_outbox_leases' }],
       );
 
       await runMigrations(databaseUrl, 'down');
@@ -56,6 +79,13 @@ integration('migration runner supports up, repeated up, down, and up again', asy
           )
         ).rows,
       ).toEqual([{ column_name: 'lease_token' }]);
+      expect(
+        (
+          await client.query(
+            "SELECT conname FROM pg_constraint WHERE conname='wager_terminal_snapshot_ck'",
+          )
+        ).rows,
+      ).toEqual([{ conname: 'wager_terminal_snapshot_ck' }]);
     } finally {
       await client.end();
     }

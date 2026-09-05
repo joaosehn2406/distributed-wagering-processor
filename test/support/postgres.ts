@@ -33,7 +33,7 @@ export async function reconcileWallet(
   const result = await client.query(
     `SELECT
        wallets.balance::text AS stored_balance,
-       COALESCE(SUM(CASE WHEN ledger.direction='CREDIT' THEN ledger.amount ELSE -ledger.amount END), 0.00)::numeric(20,2)::text AS calculated_balance,
+       COALESCE(SUM(CASE WHEN ledger.direction='CREDIT' THEN ledger.amount ELSE -ledger.amount END), '0.00'::numeric)::numeric(20,2)::text AS calculated_balance,
        count(ledger.id)::text AS checked_entries
      FROM wallets
      LEFT JOIN wallet_ledger_entries AS ledger ON ledger.wallet_id=wallets.id

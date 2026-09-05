@@ -18,8 +18,9 @@ function command(input: {
   playerId: string;
   idempotencyKey: string;
   externalTransactionId: string;
-  kind: 'BET' | 'LOSS';
+  kind: 'BET' | 'WIN' | 'LOSS' | 'REFUND' | 'ROLLBACK';
   amount: string;
+  referenceExternalTransactionId?: string;
 }) {
   return {
     providerId: 'provider-a',
@@ -31,6 +32,9 @@ function command(input: {
     gameId: 'game-a',
     kind: input.kind,
     money: { amount: input.amount, currency: 'BRL' },
+    ...(input.referenceExternalTransactionId === undefined
+      ? {}
+      : { referenceExternalTransactionId: input.referenceExternalTransactionId }),
   };
 }
 
@@ -133,13 +137,78 @@ integration('persists the financial core atomically and enforces schema guardrai
         balance: { amount: '75.00', currency: 'BRL' },
         walletVersion: '2',
       });
+
+      const win = await wagers.submit(
+        command({
+          walletId: opening.id,
+          playerId: openingPlayer,
+          idempotencyKey: 'provider-a:win-1',
+          externalTransactionId: 'win-1',
+          kind: 'WIN',
+          amount: '25.00',
+        }),
+      );
+      expect(win).toMatchObject({
+        status: 'PROCESSED',
+        balance: { amount: '100.00', currency: 'BRL' },
+        walletVersion: '3',
+      });
+      const refund = await wagers.submit(
+        command({
+          walletId: opening.id,
+          playerId: openingPlayer,
+          idempotencyKey: 'provider-a:refund-1',
+          externalTransactionId: 'refund-1',
+          kind: 'REFUND',
+          amount: '25.00',
+          referenceExternalTransactionId: 'bet-1',
+        }),
+      );
+      expect(refund).toMatchObject({
+        status: 'PROCESSED',
+        balance: { amount: '125.00', currency: 'BRL' },
+        walletVersion: '4',
+      });
+      const duplicatedRefund = await wagers.submit(
+        command({
+          walletId: opening.id,
+          playerId: openingPlayer,
+          idempotencyKey: 'provider-a:refund-2',
+          externalTransactionId: 'refund-2',
+          kind: 'REFUND',
+          amount: '25.00',
+          referenceExternalTransactionId: 'bet-1',
+        }),
+      );
+      expect(duplicatedRefund).toMatchObject({
+        status: 'REJECTED',
+        failureCode: 'REFERENCE_ALREADY_REVERSED',
+        balance: { amount: '125.00', currency: 'BRL' },
+        walletVersion: '4',
+      });
+      const rollback = await wagers.submit(
+        command({
+          walletId: opening.id,
+          playerId: openingPlayer,
+          idempotencyKey: 'provider-a:rollback-refund-1',
+          externalTransactionId: 'rollback-refund-1',
+          kind: 'ROLLBACK',
+          amount: '25.00',
+          referenceExternalTransactionId: 'refund-1',
+        }),
+      );
+      expect(rollback).toMatchObject({
+        status: 'PROCESSED',
+        balance: { amount: '100.00', currency: 'BRL' },
+        walletVersion: '5',
+      });
       const postBusinessRows = await client.query(
         `SELECT balance::text, version::text,
            (SELECT count(*)::text FROM wallet_ledger_entries WHERE wallet_id=$1) AS ledger
          FROM wallets WHERE id=$1`,
         [opening.id],
       );
-      expect(postBusinessRows.rows[0]).toEqual({ balance: '75.00', version: '2', ledger: '2' });
+      expect(postBusinessRows.rows[0]).toEqual({ balance: '100.00', version: '5', ledger: '5' });
 
       const atomicPlayer = playerId();
       const atomicWallet = await wallets.execute({
@@ -274,9 +343,9 @@ integration('persists the financial core atomically and enforces schema guardrai
         checkedEntries: '0',
       });
       expect(await reconcileWallet(client, opening.id)).toEqual({
-        storedBalance: '75.00',
-        calculatedBalance: '75.00',
-        checkedEntries: '2',
+        storedBalance: '100.00',
+        calculatedBalance: '100.00',
+        checkedEntries: '5',
       });
       expect(await reconcileWallet(client, atomicWallet.id)).toEqual({
         storedBalance: '30.00',
@@ -286,10 +355,10 @@ integration('persists the financial core atomically and enforces schema guardrai
       expect(await reconciliation.execute(opening.id, 'integration-financial-core')).toEqual({
         walletId: opening.id,
         consistent: true,
-        storedBalance: { amount: '75.00', currency: 'BRL' },
-        calculatedBalance: { amount: '75.00', currency: 'BRL' },
+        storedBalance: { amount: '100.00', currency: 'BRL' },
+        calculatedBalance: { amount: '100.00', currency: 'BRL' },
         difference: { amount: '0.00', currency: 'BRL' },
-        checkedEntries: '2',
+        checkedEntries: '5',
       });
     } finally {
       await client.end();

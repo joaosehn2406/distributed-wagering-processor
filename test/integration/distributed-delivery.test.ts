@@ -178,7 +178,12 @@ integration(
 
           await sendCommand(queues.wagers, {}, 'transport-invalid', 'invalid', queues.client);
           await deliverNext(consumer, queues);
-          expect(await receiveOne(queues.client, queues.wagerDlq)).toBeDefined();
+          const invalidDlq = await receiveOne(queues.client, queues.wagerDlq);
+          expect(invalidDlq?.Body).toBe('{}');
+          expect(invalidDlq?.MessageAttributes?.failureReason?.StringValue).toBe(
+            'permanent_payload',
+          );
+          expect(invalidDlq?.MessageAttributes?.logicalMessageId?.StringValue).toHaveLength(64);
 
           await client.query(`
           CREATE FUNCTION force_transient_ledger_failure() RETURNS trigger LANGUAGE plpgsql AS $$

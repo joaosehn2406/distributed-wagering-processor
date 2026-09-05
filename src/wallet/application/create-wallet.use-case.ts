@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { Money, type MoneyProps } from '../../shared/domain/money.js';
 import { DatabaseService } from '../../shared/infrastructure/database.service.js';
-import { Wallet, type BalanceMovement } from '../domain/wallet.js';
+import { Wallet } from '../domain/wallet.js';
+import { WalletLedgerEntry } from '../domain/wallet-ledger-entry.js';
 import { WagerTransaction } from '../../wagering/domain/wager-transaction.js';
 import { WagerRepository } from '../../wagering/infrastructure/wager.repository.js';
 import { ConflictError } from '../../wagering/application/submit-wager-transaction.use-case.js';
@@ -49,13 +50,16 @@ export class CreateWalletUseCase {
           );
           // The parent row is persisted before the ledger row that references it.
           await WagerRepository.insertWager(em, opening);
-          const movement: BalanceMovement = {
+          const entry = WalletLedgerEntry.create({
+            walletId: id,
+            transactionId: openingId,
             direction: 'CREDIT',
-            amount: money,
+            money,
             balanceBefore: Money.zero(money.currency),
             balanceAfter: money,
-          };
-          await WagerRepository.insertLedger(em, id, openingId, movement);
+            createdAt: now,
+          });
+          await WagerRepository.insertLedger(em, entry);
           const context = { correlationId: command.correlationId ?? openingId, occurredAt: now };
           await WagerRepository.enqueueOutbox(
             em,
@@ -63,7 +67,7 @@ export class CreateWalletUseCase {
           );
           await WagerRepository.enqueueOutbox(
             em,
-            WalletBalanceChangedEvent.from(wallet, opening, movement, context),
+            WalletBalanceChangedEvent.from(wallet, opening, entry, context),
           );
         }
         return {
