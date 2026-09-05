@@ -111,10 +111,17 @@ worker concurrency but is not treated as causal ordering.
 
 ## Validation boundary
 
-The code and tests describe real PostgreSQL/LocalStack proofs, but they have
-not been dynamically executed in this environment: LocalStack at
-`localhost:4566` refused connections and PostgreSQL at `localhost:5432`
-rejected `wager/wager`. Static checks and unit tests passed. The exact commands
-and required evidence before submission are listed in `IMPLEMENTATION_STATUS.md`
-and `VALIDACAO_FINAL.md`; none of the distributed guarantees is represented as
-executed until those commands pass.
+Static checks, unit tests and the full integration suite passed. The integration
+proof ran against PostgreSQL and LocalStack real services inside the Compose
+network: seven tests and 91 assertions covered database constraints, 50-way
+concurrency, three independent Nest/Bun processes, SQS DLQ/retry/redelivery,
+two publishers, pending-reference recovery, crash after commit/before ACK and
+exact reconciliation. `/health/live`, `/health/ready` and `/metrics` also
+responded against the running stack.
+
+This host has a separate PostgreSQL process on host port `5432`, so the proof
+used `docker compose run --rm --no-deps api bun run test:integration` rather
+than accidentally testing that external database. `POSTGRES_HOST_PORT` and
+`LOCALSTACK_HOST_PORT` make host mappings configurable when direct host test
+execution is preferred. The evidence and exact results are recorded in
+`IMPLEMENTATION_STATUS.md` and `VALIDACAO_FINAL.md`.

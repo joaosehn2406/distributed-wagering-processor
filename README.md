@@ -15,6 +15,15 @@ services are healthy, verify the API with `curl http://localhost:3000/health/rea
 and `curl http://localhost:3000/metrics`. `docker compose config --quiet`
 validates the Compose model without starting containers.
 
+If another local PostgreSQL or SQS emulator owns a host port, Compose exposes
+configurable host mappings without changing the container network. For example,
+on PowerShell use `$env:POSTGRES_HOST_PORT='5433'` before `docker compose up`;
+then run host integration tests with
+`$env:INTEGRATION_DATABASE_URL='postgresql://wager:wager@localhost:5433/wagering'`.
+Likewise, set `LOCALSTACK_HOST_PORT` and `SQS_ENDPOINT` together when changing
+the LocalStack host port. The application containers continue to use
+`postgres:5432` and `localstack:4566` internally.
+
 Compose starts six independent application processes after the one-shot migration
 service: `api`, `sqs-consumer`, `outbox-publisher-a`, `outbox-publisher-b`, and
 `pending-worker` (plus `migrate`). The two publishers are intentional: leases in
@@ -81,6 +90,13 @@ database; use `INTEGRATION_DATABASE_URL` when it differs from
 `postgresql://wager:wager@localhost:5432/wagering`. It also needs LocalStack at
 `SQS_ENDPOINT` (default `http://localhost:4566`). `bun run test:critical` runs
 the unit and integration suites together and has the same external requirement.
+
+If host port `5432` belongs to another PostgreSQL, run the same real suite
+inside the Compose network instead of touching that external service:
+
+```bash
+docker compose run --rm --no-deps api bun run test:integration
+```
 
 When executed against those real services, the process-recovery test launches
 an API, a consumer and two publisher processes, sets the guarded
