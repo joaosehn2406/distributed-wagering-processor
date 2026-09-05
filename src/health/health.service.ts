@@ -18,7 +18,7 @@ export class HealthService {
     checks: { postgres: 'ok'; wagerQueue: 'ok'; wagerDlq: 'ok'; walletEventsQueue: 'ok' };
   }> {
     try {
-      await this.database.em.getConnection().execute('SELECT 1');
+      await this.database.em.execute('SELECT 1');
       await Promise.all(
         [this.env.wagerQueueUrl, this.env.wagerDlqQueueUrl, this.env.walletEventsQueueUrl].map(
           async (QueueUrl) =>

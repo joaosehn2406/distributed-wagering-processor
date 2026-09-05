@@ -17,9 +17,9 @@ const one = async (
   em: EntityManager,
   sql: string,
   params: unknown[] = [],
-): Promise<Row | undefined> => (await em.getConnection().execute<Row[]>(sql, params))[0];
+): Promise<Row | undefined> => (await em.execute<Row[]>(sql, params))[0];
 const rows = async (em: EntityManager, sql: string, params: unknown[] = []): Promise<Row[]> =>
-  em.getConnection().execute<Row[]>(sql, params);
+  em.execute<Row[]>(sql, params);
 const asDate = (v: unknown): Date => new Date(String(v));
 const optionalDate = (v: unknown): Date | undefined => (v == null ? undefined : asDate(v));
 const optionalString = (v: unknown): string | undefined => (v == null ? undefined : String(v));
@@ -129,91 +129,83 @@ export class WagerRepository {
     return row ? wagerOf(row) : undefined;
   }
   static async insertWallet(em: EntityManager, wallet: Wallet): Promise<void> {
-    await em
-      .getConnection()
-      .execute(
-        'INSERT INTO wallets(id,player_id,currency,balance,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
-        [
-          wallet.id,
-          wallet.playerId,
-          wallet.currency,
-          wallet.balance.toString(),
-          wallet.version.toString(),
-          wallet.createdAt,
-          wallet.updatedAt,
-        ],
-      );
-  }
-  static async updateWallet(em: EntityManager, wallet: Wallet): Promise<void> {
-    await em
-      .getConnection()
-      .execute('UPDATE wallets SET balance=?, version=?, updated_at=? WHERE id=?', [
+    await em.execute(
+      'INSERT INTO wallets(id,player_id,currency,balance,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
+      [
+        wallet.id,
+        wallet.playerId,
+        wallet.currency,
         wallet.balance.toString(),
         wallet.version.toString(),
+        wallet.createdAt,
         wallet.updatedAt,
-        wallet.id,
-      ]);
+      ],
+    );
+  }
+  static async updateWallet(em: EntityManager, wallet: Wallet): Promise<void> {
+    await em.execute('UPDATE wallets SET balance=?, version=?, updated_at=? WHERE id=?', [
+      wallet.balance.toString(),
+      wallet.version.toString(),
+      wallet.updatedAt,
+      wallet.id,
+    ]);
   }
   static async insertWager(em: EntityManager, tx: WagerTransaction): Promise<void> {
     const s = tx.snapshot;
-    await em
-      .getConnection()
-      .execute(
-        `INSERT INTO wager_transactions(id,provider_id,external_transaction_id,idempotency_key,payload_hash,wallet_id,player_id,round_id,game_id,kind,amount,currency,reference_external_transaction_id,reference_transaction_id,status,failure_code,accepted_balance,accepted_version,result_balance,result_version,reference_attempts,next_reference_attempt_at,reference_expires_at,processed_at,terminal_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [
-          s.id,
-          s.providerId,
-          s.externalTransactionId,
-          s.idempotencyKey,
-          s.payloadHash,
-          s.walletId,
-          s.playerId,
-          s.roundId,
-          s.gameId,
-          s.kind,
-          s.money.toString(),
-          s.money.currency,
-          s.referenceExternalTransactionId ?? null,
-          s.referenceTransactionId ?? null,
-          s.status,
-          s.failureCode ?? null,
-          s.acceptedBalance?.amount ?? null,
-          s.acceptedVersion?.toString() ?? null,
-          s.resultBalance?.amount ?? null,
-          s.resultVersion?.toString() ?? null,
-          s.referenceAttempts.toString(),
-          s.nextReferenceAttemptAt ?? null,
-          s.referenceExpiresAt ?? null,
-          s.processedAt ?? null,
-          s.terminalAt ?? null,
-          s.createdAt,
-          s.updatedAt,
-        ],
-      );
+    await em.execute(
+      `INSERT INTO wager_transactions(id,provider_id,external_transaction_id,idempotency_key,payload_hash,wallet_id,player_id,round_id,game_id,kind,amount,currency,reference_external_transaction_id,reference_transaction_id,status,failure_code,accepted_balance,accepted_version,result_balance,result_version,reference_attempts,next_reference_attempt_at,reference_expires_at,processed_at,terminal_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        s.id,
+        s.providerId,
+        s.externalTransactionId,
+        s.idempotencyKey,
+        s.payloadHash,
+        s.walletId,
+        s.playerId,
+        s.roundId,
+        s.gameId,
+        s.kind,
+        s.money.toString(),
+        s.money.currency,
+        s.referenceExternalTransactionId ?? null,
+        s.referenceTransactionId ?? null,
+        s.status,
+        s.failureCode ?? null,
+        s.acceptedBalance?.amount ?? null,
+        s.acceptedVersion?.toString() ?? null,
+        s.resultBalance?.amount ?? null,
+        s.resultVersion?.toString() ?? null,
+        s.referenceAttempts.toString(),
+        s.nextReferenceAttemptAt ?? null,
+        s.referenceExpiresAt ?? null,
+        s.processedAt ?? null,
+        s.terminalAt ?? null,
+        s.createdAt,
+        s.updatedAt,
+      ],
+    );
   }
   static async updateWager(em: EntityManager, tx: WagerTransaction): Promise<void> {
     const s = tx.snapshot;
-    await em
-      .getConnection()
-      .execute(
-        'UPDATE wager_transactions SET reference_transaction_id=?,status=?,failure_code=?,accepted_balance=?,accepted_version=?,result_balance=?,result_version=?,reference_attempts=?,next_reference_attempt_at=?,reference_expires_at=?,processed_at=?,terminal_at=?,updated_at=? WHERE id=?',
-        [
-          s.referenceTransactionId ?? null,
-          s.status,
-          s.failureCode ?? null,
-          s.acceptedBalance?.amount ?? null,
-          s.acceptedVersion?.toString() ?? null,
-          s.resultBalance?.amount ?? null,
-          s.resultVersion?.toString() ?? null,
-          s.referenceAttempts.toString(),
-          s.nextReferenceAttemptAt ?? null,
-          s.referenceExpiresAt ?? null,
-          s.processedAt ?? null,
-          s.terminalAt ?? null,
-          s.updatedAt,
-          s.id,
-        ],
-      );
+    await em.execute(
+      'UPDATE wager_transactions SET reference_transaction_id=?,status=?,failure_code=?,accepted_balance=?,accepted_version=?,result_balance=?,result_version=?,reference_attempts=?,next_reference_attempt_at=?,reference_expires_at=?,processed_at=?,terminal_at=?,updated_at=? WHERE id=?',
+      [
+        s.referenceTransactionId ?? null,
+        s.status,
+        s.failureCode ?? null,
+        s.acceptedBalance?.amount ?? null,
+        s.acceptedVersion?.toString() ?? null,
+        s.resultBalance?.amount ?? null,
+        s.resultVersion?.toString() ?? null,
+        s.referenceAttempts.toString(),
+        s.nextReferenceAttemptAt ?? null,
+        s.referenceExpiresAt ?? null,
+        s.processedAt ?? null,
+        s.terminalAt ?? null,
+        s.updatedAt,
+        s.id,
+      ],
+    );
   }
   static async insertLedger(
     em: EntityManager,
@@ -221,22 +213,20 @@ export class WagerRepository {
     transactionId: string,
     movement: BalanceMovement,
   ): Promise<void> {
-    await em
-      .getConnection()
-      .execute(
-        'INSERT INTO wallet_ledger_entries(id,wallet_id,transaction_id,direction,amount,currency,balance_before,balance_after,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        [
-          randomUUID(),
-          walletId,
-          transactionId,
-          movement.direction,
-          movement.amount.toString(),
-          movement.amount.currency,
-          movement.balanceBefore.toString(),
-          movement.balanceAfter.toString(),
-          new Date(),
-        ],
-      );
+    await em.execute(
+      'INSERT INTO wallet_ledger_entries(id,wallet_id,transaction_id,direction,amount,currency,balance_before,balance_after,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      [
+        randomUUID(),
+        walletId,
+        transactionId,
+        movement.direction,
+        movement.amount.toString(),
+        movement.amount.currency,
+        movement.balanceBefore.toString(),
+        movement.balanceAfter.toString(),
+        new Date(),
+      ],
+    );
   }
   static async ledger(
     em: EntityManager,
@@ -269,19 +259,17 @@ export class WagerRepository {
   static async enqueueOutbox(em: EntityManager, event: IntegrationEvent<object>): Promise<void> {
     const message = OutboxMessage.enqueue(event);
     const state = message.snapshot;
-    await em
-      .getConnection()
-      .execute(
-        'INSERT INTO outbox_messages(id,event_id,aggregate_id,event_type,event_version,payload,attempts,next_attempt_at,created_at) VALUES (?,?,?,?,?,?,0,now(),now())',
-        [
-          state.id,
-          state.eventId,
-          state.aggregateId,
-          state.eventType,
-          state.eventVersion,
-          JSON.stringify(state.payload),
-        ],
-      );
+    await em.execute(
+      'INSERT INTO outbox_messages(id,event_id,aggregate_id,event_type,event_version,payload,attempts,next_attempt_at,created_at) VALUES (?,?,?,?,?,?,0,now(),now())',
+      [
+        state.id,
+        state.eventId,
+        state.aggregateId,
+        state.eventType,
+        state.eventVersion,
+        JSON.stringify(state.payload),
+      ],
+    );
   }
   static async claimInbox(
     em: EntityManager,
@@ -323,12 +311,10 @@ export class WagerRepository {
     consumer: string,
     messageId: string,
   ): Promise<void> {
-    await em
-      .getConnection()
-      .execute(
-        'UPDATE inbox_messages SET processed_at=now() WHERE consumer_name=? AND message_id=?',
-        [consumer, messageId],
-      );
+    await em.execute(
+      'UPDATE inbox_messages SET processed_at=now() WHERE consumer_name=? AND message_id=?',
+      [consumer, messageId],
+    );
   }
   static async claimDueOutbox(
     em: EntityManager,
@@ -403,18 +389,16 @@ export class WagerRepository {
     leaseUntil: Date,
     limit: bigint,
   ): Promise<string[]> {
-    const rows = await em
-      .getConnection()
-      .execute<
-        { id: string }[]
-      >("SELECT id FROM wager_transactions WHERE status='PENDING_REFERENCE' AND next_reference_attempt_at <= now() FOR UPDATE SKIP LOCKED LIMIT ?", [limit.toString()]);
+    const rows = await em.execute<{ id: string }[]>(
+      "SELECT id FROM wager_transactions WHERE status='PENDING_REFERENCE' AND next_reference_attempt_at <= now() FOR UPDATE SKIP LOCKED LIMIT ?",
+      [limit.toString()],
+    );
     const ids: string[] = [];
     for (const row of rows) {
-      const updated = await em
-        .getConnection()
-        .execute<
-          { id: string }[]
-        >("UPDATE wager_transactions SET next_reference_attempt_at=?,updated_at=now() WHERE id=? AND status='PENDING_REFERENCE' RETURNING id", [leaseUntil, row.id]);
+      const updated = await em.execute<{ id: string }[]>(
+        "UPDATE wager_transactions SET next_reference_attempt_at=?,updated_at=now() WHERE id=? AND status='PENDING_REFERENCE' RETURNING id",
+        [leaseUntil, row.id],
+      );
       if (updated.length) ids.push(String(updated[0]!.id));
     }
     return ids;

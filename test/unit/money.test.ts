@@ -8,6 +8,12 @@ describe('Money', () => {
     const b = Money.fromContract({ amount: '0.20', currency: 'BRL' });
     expect(a.add(b).toJSON()).toEqual({ amount: '0.30', currency: 'BRL' });
   });
+  test('treats zero as neither positive nor negative', () => {
+    const zero = Money.zero('BRL');
+    expect(zero.isZero()).toBe(true);
+    expect(zero.isPositive()).toBe(false);
+    expect(zero.isNegative()).toBe(false);
+  });
   test('rejects noncanonical public values', () => {
     for (const amount of ['1', '01.00', '1.0', '1.000', '-1.00', '1e2', ''])
       expect(() => Money.fromContract({ amount, currency: 'BRL' })).toThrow(DomainError);

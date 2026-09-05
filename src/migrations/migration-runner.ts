@@ -18,11 +18,10 @@ export async function runMigrations(databaseUrl: string, command: MigrationComma
     entities: [SchemaMigrationEntity],
   });
   try {
-    const connection = orm.em.getConnection();
-    await connection.execute(
+    await orm.em.execute(
       'CREATE TABLE IF NOT EXISTS schema_migrations (name varchar(100) PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())',
     );
-    const appliedRows = await connection.execute<{ name: string }[]>(
+    const appliedRows = await orm.em.execute<{ name: string }[]>(
       'SELECT name FROM schema_migrations',
     );
     const applied = new Set(appliedRows.map((row) => row.name));
@@ -31,10 +30,8 @@ export async function runMigrations(databaseUrl: string, command: MigrationComma
       for (const migration of migrations) {
         if (applied.has(migration.name)) continue;
         await orm.em.transactional(async (em) => {
-          await em.getConnection().execute(migration.up);
-          await em
-            .getConnection()
-            .execute('INSERT INTO schema_migrations(name) VALUES (?)', [migration.name]);
+          await em.execute(migration.up);
+          await em.execute('INSERT INTO schema_migrations(name) VALUES (?)', [migration.name]);
         });
       }
       return;
@@ -43,10 +40,8 @@ export async function runMigrations(databaseUrl: string, command: MigrationComma
     const migration = [...migrations].reverse().find((item) => applied.has(item.name));
     if (!migration) return;
     await orm.em.transactional(async (em) => {
-      await em.getConnection().execute(migration.down);
-      await em
-        .getConnection()
-        .execute('DELETE FROM schema_migrations WHERE name=?', [migration.name]);
+      await em.execute(migration.down);
+      await em.execute('DELETE FROM schema_migrations WHERE name=?', [migration.name]);
     });
   } finally {
     await orm.close(true);

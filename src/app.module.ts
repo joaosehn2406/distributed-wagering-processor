@@ -1,5 +1,6 @@
 import { Module, RequestMethod, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
+import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import { loadEnvironment } from './config/environment.js';
 import { DatabaseService } from './shared/infrastructure/database.service.js';
 import { MetricsService } from './shared/infrastructure/metrics.service.js';
@@ -19,7 +20,11 @@ import { CorrelationMiddleware } from './bootstrap/correlation.middleware.js';
 const env = loadEnvironment();
 @Module({
   imports: [
-    MikroOrmModule.forRoot({ clientUrl: env.databaseUrl, entities: [SchemaMigrationEntity] }),
+    MikroOrmModule.forRoot({
+      driver: PostgreSqlDriver,
+      clientUrl: env.databaseUrl,
+      entities: [SchemaMigrationEntity],
+    }),
   ],
   controllers: [HttpController],
   providers: [
